@@ -145,6 +145,15 @@ propagates to the notes, to the prompt/finesse search run for the next clue, and
 to the move values, with no second mechanism to keep in sync. "That clue was a
 chop move" is expressed by marking the chop card as chop moved.
 
+`CardStatus` carries one status scala-bot does not have: `saved`. scala-bot has
+no need of it, because a save is the *absence* of a play promise on a clued card
+— being clued already lifts a card off the chop, so there is nothing to record.
+That is true of the mechanics and useless to read: it makes "saved" and "carries
+no instruction" the same state, and a save does say something the other does not
+— that the card is one of the identities worth saving. So it is a status here,
+set when a save is read and offered as a correction, and `worthSavingOrds()`
+narrows a card to the 5s, 2s and last copies when you name it.
+
 `applyOverrides()` runs at the end of *every* settle rather than once at the
 end, so a pinned card is already pinned when the following clue is interpreted —
 the bot connects through your reading rather than around it. Your word wins

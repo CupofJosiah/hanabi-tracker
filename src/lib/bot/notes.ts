@@ -112,6 +112,9 @@ export function noteDetail(analysis: BotAnalysis, order: number): NoteDetail | u
       case "finessed":
         summary = `Finessed — expected to blind-play ${candidates.join(", ")}.`;
         break;
+      case "saved":
+        summary = `Saved for later — one of ${candidates.join(", ")}.`;
+        break;
       case "chop moved":
         summary = "Chop moved — held back from the discard pile.";
         break;

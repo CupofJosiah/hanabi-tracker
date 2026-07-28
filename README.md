@@ -94,9 +94,14 @@ Tables play off-book, and a clue that means something at your table means
 nothing to the convention. Rather than have the bot guess, tell it:
 
 1. **Tap the card**, then **The bot has this wrong**.
-2. **What is it doing?** Playing · Blind playing · Chop moved · Trash · Nothing
-   special.
+2. **What is it doing?** Playing · Blind playing · Saved · Chop moved · Trash ·
+   Nothing special.
 3. **Is it a card you know?** Tap one of the identities it could be.
+
+*Saved* and *Chop moved* are the two ways of saying "do not throw this away",
+and they are not the same: a saved card has been touched, a chop-moved one has
+not. Saying a card was saved also narrows it — it must be one of the cards worth
+saving, so on a fresh board that is the 5s and the 2s.
 
 A correction is attached to a **card**, not to a clue, because what each card
 means *is* the bot's state — pin that and the notes, the connections it goes

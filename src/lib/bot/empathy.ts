@@ -42,12 +42,22 @@ export function difference(a: ReadonlySet<Ord>, b: ReadonlySet<Ord>): Set<Ord> {
   return out;
 }
 
-/** The conventional label a card is carrying, from scala-bot's `CardStatus`. */
+/**
+ * The conventional label a card is carrying, from scala-bot's `CardStatus`.
+ *
+ * `saved` is the one addition. scala-bot has no such status because a save is
+ * the *absence* of a play promise on a clued card — being clued already lifts a
+ * card off the chop, so nothing needs recording. That is true of the mechanics
+ * but useless to read: "saved" and "carries no instruction" are the same state
+ * with very different meanings at a table, and a save says something the other
+ * does not — that the card is one of the identities worth saving.
+ */
 export type CardStatus =
   | "none"
   | "called to play"
   | "finessed"
   | "chop moved"
+  | "saved"
   | "called to discard";
 
 export interface Thought {
@@ -117,6 +127,22 @@ export function playableOrds(state: GameState): Set<Ord> {
   for (let suitIndex = 0; suitIndex < state.variant.suits.length; suitIndex++) {
     const rank = state.playStacks[suitIndex] + 1;
     if (rank <= 5) out.add(ordOf({ suitIndex, rank }));
+  }
+  return out;
+}
+
+/**
+ * Ordinals a clue could sensibly be protecting: the last copy of anything, and
+ * the 5s and 2s that convention saves on sight.
+ *
+ * Used when you tell the bot a card was saved, to work out what that says about
+ * which card it is.
+ */
+export function worthSavingOrds(state: GameState): Set<Ord> {
+  const out = new Set<Ord>(criticalOrds(state));
+  for (const identity of allIdentities(state.variant)) {
+    if (state.playStacks[identity.suitIndex] >= identity.rank) continue;
+    if (identity.rank === 5 || identity.rank === 2) out.add(ordOf(identity));
   }
   return out;
 }

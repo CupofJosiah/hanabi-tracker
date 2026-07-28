@@ -86,7 +86,9 @@ describe("reading a clue", () => {
     const interp = analysis.interps.at(-1);
     expect(interp?.kind).toBe("save");
     expect(interp?.focus).toBe(5);
-    // A save says "hold this", not "play this", so there is no [f].
+    // A save says "hold this", not "play this", so there is no [f] — but it is
+    // a state of its own, not the same as carrying no instruction at all.
+    expect(analysis.thoughts.get(5)?.status).toBe("saved");
     expect(botNote(analysis, 5)).not.toContain("[f]");
     expect(botNote(analysis, 5)).toContain("5");
   });
@@ -311,6 +313,28 @@ describe("correcting the bot", () => {
     expect(play?.move).toEqual({ kind: "play", order: 4 });
     expect(play?.value).toBeGreaterThan(0.9);
     expect(play?.reasons.join(" ")).toContain("certain to play");
+  });
+
+  it("reads 'saved' as saying which card it could be", () => {
+    const record = cluedRed();
+    // Our own slot 1, which nothing has touched, so it could be anything.
+    const plain = analyse(record, SETTINGS);
+    expect(plain.thoughts.get(4)!.inferred.size).toBeGreaterThan(20);
+
+    const corrected = analyse(record, SETTINGS, { 4: { status: "saved", fromAction: 1 } });
+    const inferred = corrected.thoughts.get(4)!.inferred;
+
+    // Saying it was saved rules out everything not worth saving. On a fresh
+    // board that is the 5s and the 2s.
+    expect(inferred.size).toBe(10);
+    for (const ord of inferred) expect([2, 5]).toContain((ord % 5) + 1);
+  });
+
+  it("never empties a note by calling an unsavable card saved", () => {
+    const record = cluedRed();
+    // bo's clued red 1 is not worth saving, so the reading is left alone.
+    const corrected = analyse(record, SETTINGS, { 9: { status: "saved", fromAction: 1 } });
+    expect(botNote(corrected, 9)).toBe("r1");
   });
 
   it("applies from when you said it, not backwards", () => {

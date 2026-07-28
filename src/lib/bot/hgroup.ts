@@ -36,6 +36,7 @@ import {
   refreshPossible,
   settled,
   trashOrds,
+  worthSavingOrds,
   type Ord,
   type Thought,
 } from "./empathy";
@@ -94,6 +95,7 @@ export interface BotAnalysis {
  * model of the table that is wrong, not you.
  */
 function applyOverrides(
+  state: GameState,
   thoughts: Map<number, Thought>,
   overrides: BotOverrides,
   appliedActions: number,
@@ -105,6 +107,18 @@ function applyOverrides(
 
     thought.overridden = true;
     if (override.status !== undefined) thought.status = override.status;
+
+    // Telling the bot a card was saved says something about which card it is:
+    // it is one of the ones worth saving. Only narrow when something survives,
+    // so saying "saved" about a card that cannot be one never empties its note.
+    if (override.status === "saved" && override.identity === undefined) {
+      const worthSaving = intersect(thought.inferred, worthSavingOrds(state));
+      if (worthSaving.size > 0) {
+        thought.inferred = worthSaving;
+        thought.narrowed = true;
+      }
+    }
+
     if (override.identity !== undefined) {
       thought.inferred = new Set([override.identity]);
       thought.narrowed = true;
@@ -326,7 +340,7 @@ function settle(
 ): void {
   refreshPossible(state, thoughts);
   applyGoodTouch(state, thoughts, settings.goodTouch);
-  applyOverrides(thoughts, overrides, appliedActions);
+  applyOverrides(state, thoughts, overrides, appliedActions);
 }
 
 /**
@@ -601,9 +615,11 @@ function interpretClue(
   focusThought.narrowed = true;
   focusThought.inferred = intersect(focusThought.possible, promised);
 
-  // A save on chop promises nothing to play, so leave the status alone.
+  // A save on chop promises nothing to play — it says "hold this" instead.
   const isSave = savable.size > 0 && reachable.size === 0;
-  if (!isSave) {
+  if (isSave) {
+    focusThought.status = "saved";
+  } else {
     focusThought.status = "called to play";
     for (const link of bestConnections) {
       if (link.order < 0) continue;

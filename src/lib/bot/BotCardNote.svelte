@@ -42,6 +42,7 @@
   const STATUS_LABEL: Record<string, string> = {
     "called to play": "called to play",
     finessed: "finessed",
+    saved: "saved — held for later",
     "chop moved": "chop moved",
     "called to discard": "called to discard",
   };
@@ -50,7 +51,12 @@
   const CHOICES: { status: CardStatus; label: string; blurb: string }[] = [
     { status: "called to play", label: "Playing", blurb: "This card is going to be played." },
     { status: "finessed", label: "Blind playing", blurb: "Playing without having been touched." },
-    { status: "chop moved", label: "Chop moved", blurb: "Held back from the discard pile." },
+    {
+      status: "saved",
+      label: "Saved",
+      blurb: "Held for later — so it is one of the cards worth saving.",
+    },
+    { status: "chop moved", label: "Chop moved", blurb: "An untouched card held back from chop." },
     { status: "called to discard", label: "Trash", blurb: "Safe to throw away." },
     { status: "none", label: "Nothing special", blurb: "Carries no instruction." },
   ];
