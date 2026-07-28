@@ -1,0 +1,380 @@
+<script lang="ts">
+  import { untrack } from "svelte";
+  import { app } from "../state/app.svelte";
+  import { canDiscard, canGiveClue, stateOf } from "../hanabi/engine";
+  import { possibleIdentities, unseenCounts } from "../hanabi/deduce";
+  import {
+    endGame,
+    recordClue,
+    recordDiscard,
+    recordPlay,
+    rename,
+    setNote,
+    setupComplete,
+    undo,
+  } from "../hanabi/recording";
+  import { isKnown, type GameRecord, type Identity } from "../hanabi/types";
+  import { identityName } from "../hanabi/variants";
+  import CardFace from "../ui/CardFace.svelte";
+  import IdentityPicker from "../ui/IdentityPicker.svelte";
+  import Sheet from "../ui/Sheet.svelte";
+  import ClueSheet from "../game/ClueSheet.svelte";
+  import DealPanel from "../game/DealPanel.svelte";
+  import DiscardPanel from "../game/DiscardPanel.svelte";
+  import HandRow from "../game/HandRow.svelte";
+  import HistoryPanel from "../game/HistoryPanel.svelte";
+  import StatusStrip from "../game/StatusStrip.svelte";
+
+  interface Props {
+    record: GameRecord;
+  }
+
+  let { record }: Props = $props();
+
+  type Move = "play" | "discard";
+  type Pending =
+    | { kind: "idle" }
+    | { kind: "select"; move: Move }
+    | { kind: "reveal"; move: Move; order: number }
+    | { kind: "draw"; move: Move; order: number; reveal?: Identity }
+    | { kind: "clue" };
+
+  /** Dims a hand entirely while another seat's card is being picked. */
+  const NO_CARDS: Set<number> = new Set();
+
+  let pending = $state<Pending>({ kind: "idle" });
+  let menuOpen = $state(false);
+  let detailOrder = $state<number | undefined>(undefined);
+  let renaming = $state<string | undefined>(undefined);
+
+  // Resuming a game skips the deal screen; a fresh one waits for a confirming tap
+  // so the hands can be checked before the first turn.
+  let dealConfirmed = $state(untrack(() => setupComplete(record)));
+  let dealing = $derived(!setupComplete(record) || !dealConfirmed);
+  let game = $derived(stateOf(record));
+  let counts = $derived(unseenCounts(game));
+  let possibilities = $derived.by(() => {
+    const map = new Map<number, Identity[]>();
+    for (const card of game.cards) {
+      if (card && !isKnown(card.identity)) {
+        map.set(card.order, possibleIdentities(game, card.order, counts));
+      }
+    }
+    return map;
+  });
+
+  let actorHand = $derived(game.hands[game.currentPlayerIndex] ?? []);
+  let selectable = $derived(pending.kind === "select" ? new Set(actorHand) : undefined);
+  let actorName = $derived(game.players[game.currentPlayerIndex]);
+  let drawerIsUs = $derived(game.currentPlayerIndex === game.ourPlayerIndex);
+
+  function save(next: GameRecord) {
+    app.put(next);
+  }
+
+  function chooseCard(order: number) {
+    if (pending.kind !== "select") return;
+    const card = game.cards[order];
+    if (!card) return;
+    if (!isKnown(card.identity)) {
+      // Our own card: playing or discarding it turns it face up, so name it now.
+      pending = { kind: "reveal", move: pending.move, order };
+      return;
+    }
+    afterIdentity(pending.move, order, undefined);
+  }
+
+  function afterIdentity(move: Move, order: number, reveal: Identity | undefined) {
+    // A replacement is drawn unless the deck is out; we can only name it for
+    // someone else's hand.
+    if (game.cardsRemaining > 0 && !drawerIsUs) {
+      pending = { kind: "draw", move, order, reveal };
+      return;
+    }
+    commit(move, order, reveal, undefined);
+  }
+
+  function commit(move: Move, order: number, reveal?: Identity, drawn?: Identity) {
+    const input = { order, reveal, drawn };
+    save(move === "play" ? recordPlay(record, input) : recordDiscard(record, input));
+    pending = { kind: "idle" };
+  }
+
+  function onClue(target: number, clue: Parameters<typeof recordClue>[2], touched: number[]) {
+    save(recordClue(record, target, clue, target === record.ourPlayerIndex ? touched : undefined));
+    pending = { kind: "idle" };
+  }
+
+  function undoLast() {
+    if (record.actions.length === 0) return;
+    const last = game.log.at(-1);
+    save(undo(record));
+    pending = { kind: "idle" };
+    app.toast(last ? `Undid: ${last.text}` : "Undid the last action.");
+  }
+</script>
+
+<header class="topbar">
+  <button class="icon-btn" aria-label="Back" onclick={() => app.go({ name: "home" })}>‹</button>
+  <h1>{record.title}</h1>
+  {#if !dealing}
+    <button
+      class="icon-btn"
+      aria-label="Undo last action"
+      onclick={undoLast}
+      disabled={record.actions.length === 0}>↶</button
+    >
+  {/if}
+  <button class="icon-btn" aria-label="More" onclick={() => (menuOpen = true)}>⋯</button>
+</header>
+
+{#if dealing}
+  <DealPanel
+    {record}
+    onchange={save}
+    onready={() => {
+      dealConfirmed = true;
+      app.toast(`${record.players[0]} starts.`);
+    }}
+  />
+{:else}
+  <div class="body">
+    <StatusStrip {game} />
+
+    {#if game.finished}
+      <div class="card-panel done">
+        <h2>Game over · {game.score}/{game.maxScore}</h2>
+        <button class="btn btn-primary" onclick={() => app.go({ name: "review", id: record.id })}>
+          Review &amp; export
+        </button>
+      </div>
+    {/if}
+
+    {#each game.players as _player, playerIndex (playerIndex)}
+      <HandRow
+        {game}
+        {playerIndex}
+        notes={record.notes}
+        {possibilities}
+        selectable={pending.kind === "select"
+          ? playerIndex === game.currentPlayerIndex
+            ? selectable
+            : NO_CARDS
+          : undefined}
+        onselect={pending.kind === "select"
+          ? playerIndex === game.currentPlayerIndex
+            ? chooseCard
+            : undefined
+          : (order) => (detailOrder = order)}
+        hint={pending.kind === "select" && playerIndex === game.currentPlayerIndex
+          ? `tap the card ${actorName} ${pending.move === "play" ? "played" : "discarded"}`
+          : undefined}
+      />
+    {/each}
+
+    <DiscardPanel {game} />
+    <HistoryPanel {game} />
+  </div>
+
+  <div class="footer">
+    {#if pending.kind === "select"}
+      <div class="row">
+        <span class="muted small grow">
+          Tap {actorName}'s {pending.move === "play" ? "played" : "discarded"} card.
+        </span>
+        <button class="btn" onclick={() => (pending = { kind: "idle" })}>Cancel</button>
+      </div>
+    {:else if game.finished}
+      <button class="btn btn-primary btn-block" onclick={() => app.go({ name: "review", id: record.id })}>
+        Review &amp; export
+      </button>
+    {:else}
+      <div class="actions">
+        <button class="btn" onclick={() => (pending = { kind: "select", move: "play" })}>Play</button>
+        <button
+          class="btn"
+          disabled={!canDiscard(game)}
+          title={canDiscard(game) ? undefined : "No discarding at 8 clues"}
+          onclick={() => (pending = { kind: "select", move: "discard" })}>Discard</button
+        >
+        <button
+          class="btn btn-primary"
+          disabled={!canGiveClue(game)}
+          title={canGiveClue(game) ? undefined : "No clue tokens left"}
+          onclick={() => (pending = { kind: "clue" })}>Clue</button
+        >
+      </div>
+    {/if}
+  </div>
+{/if}
+
+{#if pending.kind === "reveal"}
+  {@const target = pending}
+  <IdentityPicker
+    variant={game.variant}
+    title="What was it?"
+    subtitle="Your card is face up now — name it so the export is complete."
+    allowed={possibilities.get(target.order)}
+    {counts}
+    onpick={(identity) => afterIdentity(target.move, target.order, identity)}
+    onclose={() => (pending = { kind: "select", move: target.move })}
+  />
+{/if}
+
+{#if pending.kind === "draw"}
+  {@const target = pending}
+  <IdentityPicker
+    variant={game.variant}
+    title="{actorName} draws"
+    subtitle="The new card goes into slot 1."
+    {counts}
+    onpick={(identity) => commit(target.move, target.order, target.reveal, identity)}
+    onclose={() => (pending = { kind: "select", move: target.move })}
+  />
+{/if}
+
+{#if pending.kind === "clue"}
+  <ClueSheet {game} onconfirm={onClue} onclose={() => (pending = { kind: "idle" })} />
+{/if}
+
+{#if detailOrder !== undefined}
+  {@const order = detailOrder}
+  {@const card = game.cards[order]}
+  {@const maybe = possibilities.get(order) ?? []}
+  <Sheet
+    title="{game.players[card.holder] ?? 'Card'} · slot {card.slot}"
+    onclose={() => (detailOrder = undefined)}
+  >
+    <div class="detail">
+      <CardFace
+        variant={game.variant}
+        identity={card.identity}
+        knowledge={card.knowledge}
+        possibilities={maybe}
+        size="lg"
+      />
+      <div class="stack grow">
+        {#if isKnown(card.identity)}
+          <p><strong>{identityName(game.variant, card.identity)}</strong></p>
+        {:else if maybe.length === 0}
+          <p class="small warn">No card fits the clues recorded for this one — check the history.</p>
+        {:else}
+          <p class="small muted">Could be</p>
+          <p class="maybe">{maybe.map((id) => identityName(game.variant, id)).join("  ")}</p>
+        {/if}
+        {#if card.knowledge.clued}
+          <p class="small muted">
+            Clued{card.knowledge.positiveRanks.length
+              ? `: ${card.knowledge.positiveRanks.join(", ")}`
+              : ""}
+          </p>
+        {/if}
+      </div>
+    </div>
+
+    <label class="stack">
+      <span class="small muted">Note (exported with the game)</span>
+      <textarea
+        rows="2"
+        value={record.notes[order] ?? ""}
+        oninput={(event) => save(setNote(record, order, event.currentTarget.value))}
+      ></textarea>
+    </label>
+  </Sheet>
+{/if}
+
+{#if menuOpen}
+  <Sheet title={record.title} subtitle={`${record.players.join(", ")} · ${record.variantName}`} onclose={() => (menuOpen = false)}>
+    <button
+      class="btn btn-block"
+      onclick={() => {
+        menuOpen = false;
+        app.go({ name: "review", id: record.id });
+      }}>Review &amp; export</button
+    >
+    <button class="btn btn-block" onclick={() => { renaming = record.title; menuOpen = false; }}>
+      Rename
+    </button>
+    {#if record.actions.length === 0}
+      <button
+        class="btn btn-block"
+        onclick={() => {
+          dealConfirmed = false;
+          menuOpen = false;
+        }}>Edit the starting hands</button
+      >
+    {/if}
+    {#if !game.finished}
+      <button
+        class="btn btn-block btn-danger"
+        onclick={() => {
+          save(endGame(record));
+          menuOpen = false;
+          app.toast("Game ended.");
+        }}>End the game now</button
+      >
+    {/if}
+    <p class="muted small">
+      Everything is saved on this device as you tap. Undo removes the last action, including the
+      card drawn with it.
+    </p>
+  </Sheet>
+{/if}
+
+{#if renaming !== undefined}
+  <Sheet title="Rename" onclose={() => (renaming = undefined)}>
+    <input bind:value={renaming} placeholder="Game name" />
+    {#snippet footer()}
+      <button class="btn btn-block" onclick={() => (renaming = undefined)}>Cancel</button>
+      <button
+        class="btn btn-primary btn-block"
+        onclick={() => {
+          if (renaming !== undefined) save(rename(record, renaming));
+          renaming = undefined;
+        }}>Save</button
+      >
+    {/snippet}
+  </Sheet>
+{/if}
+
+<style>
+  .actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1.2fr;
+    gap: 8px;
+  }
+
+  .actions .btn {
+    min-height: 52px;
+    font-size: 1rem;
+  }
+
+  .grow {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .done {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    border-color: var(--good);
+  }
+
+  .detail {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .maybe {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.9rem;
+    word-break: break-word;
+  }
+
+  .warn {
+    color: var(--warn);
+  }
+</style>

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Hanabi Tracker">
+  <defs>
+    <radialGradient id="core">
+      <stop offset="0" stop-color="#ffffff" />
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="113" fill="#15181d" />
+  <g stroke-linecap="round" fill="none">
+    <g transform="translate(256 256)">
+      <g stroke-width="14">
+        <path d="M0 -36 L0 -174" stroke="#e60000" />
+        <path d="M34 -11 L165 -54" stroke="#e6e600" />
+        <path d="M21 29 L102 141" stroke="#02ec00" />
+        <path d="M-21 29 L-102 141" stroke="#0037ff" />
+        <path d="M-34 -11 L-165 -54" stroke="#6600cc" />
+      </g>
+      <g>
+        <circle cx="0" cy="-174" r="17" fill="#e60000" />
+        <circle cx="165" cy="-54" r="17" fill="#e6e600" />
+        <circle cx="102" cy="141" r="17" fill="#02ec00" />
+        <circle cx="-102" cy="141" r="17" fill="#0037ff" />
+        <circle cx="-165" cy="-54" r="17" fill="#6600cc" />
+      </g>
+      <circle cx="0" cy="0" r="46" fill="url(#core)" />
+    </g>
+  </g>
+</svg>

@@ -1,5 +1,32 @@
 # Changelog
 
+## 3.0.0
+
+Rewritten to track a whole in-person game rather than a single player's hand.
+
+### Features
+
+- Record every turn of a live game: plays, discards and clues, with turn order,
+  clue tokens, strikes, play stacks, discard counts, pace and the final round
+  all derived rather than entered.
+- Your own hand stays hidden. Clues aimed at you are recorded slot by slot, and
+  the app shows the identities still consistent with what you know.
+- Export hanab.live JSON that hanab.live and scala-bot both read, and import the
+  same format back for review.
+- Post-game fill-in for cards you never saw, offering only identities that fit,
+  and settling the forced ones in one tap.
+- Games persist to the device on every tap, and reopening returns you to the
+  table you were recording. Whole-history backup and restore.
+- 491 variants, generated from hanab.live's own data.
+- Installable and offline-capable; deploys to GitHub Pages from `main`.
+
+### Breaking
+
+- Games recorded with 2.x are not carried over — the model changed from "my
+  hand" to "the whole table".
+- Release tooling (release-please, commitlint, husky) and the gh-pages branch
+  deploy were dropped in favour of a single GitHub Actions Pages workflow.
+
 ## [2.1.1](https://github.com/jparkhouse/hanabi-tracker/compare/v2.1.0...v2.1.1) (2024-12-02)
 
 
