@@ -93,6 +93,49 @@ because a clue recorded here has to mean the same thing when the analyser replay
 it. A colour clue's exported `value` is an index into the variant's *colourable*
 suits, skipping Rainbow, White, Prism and friends.
 
+## The bot, and why it is a second page
+
+`/bot/` is a second Vite entry sharing everything under `lib/hanabi` and
+`lib/state` with the plain app. Two pages rather than a feature flag, because
+the requirement was that the tracker at `/` keep behaving exactly as it did:
+
+- **Nothing bot-shaped is in the plain bundle.** `index.html` loads `main.ts`
+  and the shared chunk; the bot's 10 kB is only in `bot/index.html`.
+- **Three optional props** on `GameView` (`botNotes`, `aside`, `cardAside`) and
+  one on `HandRow` (`botNotes`) are the whole seam. The plain app passes none,
+  so its render is unchanged — `botflow.test.ts` asserts that from the outside.
+- **Separate service workers.** Each page precaches its own shell under its own
+  cache key. The root worker's scope covers `/bot/`, so it explicitly declines
+  navigations there; otherwise an offline visit to the bot page would be
+  answered with the plain app's shell.
+- **Shared games, separate settings.** Both read the same
+  `hanabi-tracker/v1/game/*` keys; bot settings live under their own key. Bot
+  notes are not stored at all — they are derived from `deck` + `actions`, which
+  is what keeps them out of the export and in step with undo and corrections.
+
+The reasoning is layered like scala-bot's:
+
+```
+empathy.ts     common knowledge: possible/inferred identity sets per card,
+               card counting, Good Touch, chop and finesse position
+hgroup.ts      what each clue meant: focus, fix, save vs play, and the
+               prompt/finesse search that makes an unplayable card make sense
+notes.ts       the note string, in scala-bot's format
+suggest.ts     candidate moves and what each is worth
+```
+
+Two decisions worth knowing about. **The pool is common knowledge, not ours** —
+a note has to mean the same thing to the person holding the card, or it is a
+peek rather than a convention. And **Occam's razor decides between readings**:
+of the identities a clue could be promising, only those needing the fewest blind
+plays survive, which is why a red clue on a fresh card reads as `r1` and not
+"r1, or r2 off a finesse".
+
+Levels gate techniques with scala-bot's own numbers (`object Level`): 2 finesses,
+3 fix, 4 chop moves, 5 layered. Levels 1–5 are implemented; 6–11 are listed in
+the settings screen as not-yet rather than silently ignored, and a clue the bot
+cannot justify comes back as `unclear`.
+
 ## Layout
 
 ```
@@ -111,6 +154,7 @@ src/
   lib/ui/              CardFace, IdentityPicker, Sheet, share helpers
   lib/game/            board pieces: hands, stacks, discards, clue sheet, log
   lib/views/           Home, Setup, Game, Review
+  lib/bot/             /bot/ only: conventions, empathy, notes, suggestions
 ```
 
 The dependency arrows only point one way: `views` → `game`/`ui` → `hanabi`.
@@ -131,7 +175,8 @@ moving a history between devices.
 
 ## Offline
 
-`vite.config.ts` emits a small service worker at build time listing the hashed
-bundle files, cache-first with a per-build cache name, and falls back to the
-cached shell for navigations. Assets are referenced relatively (`base: "./"`), so
-one build works at a GitHub Pages project path, at a custom domain, or from disk.
+`vite.config.ts` emits one service worker per page at build time, listing the
+hashed bundle files, cache-first with a per-build cache name, and falling back
+to that page's own cached shell for navigations. Assets are referenced
+relatively (`base: "./"`), so one build works at a GitHub Pages project path, at
+a custom domain, or from disk.

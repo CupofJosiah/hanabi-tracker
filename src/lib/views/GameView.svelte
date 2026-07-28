@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { untrack, type Snippet } from "svelte";
   import { app } from "../state/app.svelte";
   import {
     canDiscard,
@@ -36,9 +36,18 @@
 
   interface Props {
     record: GameRecord;
+    /**
+     * The three props below exist for the bot build at `/bot/` and are never
+     * passed by the plain tracker, which renders exactly as it always has.
+     */
+    botNotes?: Record<number, string>;
+    /** Panel rendered between the board and the action bar. */
+    aside?: Snippet;
+    /** Extra section inside a card's detail sheet, given the card's order. */
+    cardAside?: Snippet<[number]>;
   }
 
-  let { record }: Props = $props();
+  let { record, botNotes, aside, cardAside }: Props = $props();
 
   type Move = "play" | "discard";
   type Pending =
@@ -192,8 +201,11 @@
         hint={pending.kind === "select" && playerIndex === game.currentPlayerIndex
           ? `tap the card ${actorName} ${pending.move === "play" ? "played" : "discarded"}`
           : undefined}
+        {botNotes}
       />
     {/each}
+
+    {@render aside?.()}
 
     <DiscardPanel {game} />
     <HistoryPanel {game} />
@@ -292,6 +304,8 @@
     </div>
 
     <CardInsight {game} {order} />
+
+    {@render cardAside?.(order)}
 
     <label class="stack">
       <span class="small muted">Note (exported with the game)</span>

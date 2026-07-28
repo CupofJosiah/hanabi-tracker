@@ -15,6 +15,12 @@
     onselect?: (order: number) => void;
     /** Shown under the name, e.g. "tap the touched cards". */
     hint?: string;
+    /**
+     * Bot-only. When present, each card gets its note printed underneath, the
+     * way scala-bot writes them on hanab.live. The plain tracker never passes
+     * this and so renders exactly as it always has.
+     */
+    botNotes?: Record<number, string>;
   }
 
   let {
@@ -27,12 +33,35 @@
     highlight,
     onselect,
     hint,
+    botNotes,
   }: Props = $props();
 
   let hand = $derived(game.hands[playerIndex] ?? []);
   let isCurrent = $derived(game.currentPlayerIndex === playerIndex && !game.finished);
   let isUs = $derived(game.ourPlayerIndex === playerIndex);
 </script>
+
+{#snippet face(order: number)}
+  {@const card = game.cards[order]}
+  <!-- Spread rather than named attributes: a literal `slot=` at the root of a
+       snippet reads as Svelte's slot assignment, not as CardFace's prop. -->
+  {@const props = {
+    variant: game.variant,
+    identity: card.identity,
+    knowledge: card.knowledge,
+    possibilities: possibilities?.get(order),
+    note: notes?.[order],
+    slot: card.slot,
+    selected: selected?.has(order),
+    highlight: highlight?.has(order),
+    dim: selectable !== undefined && !selectable.has(order),
+    onclick:
+      onselect && (selectable === undefined || selectable.has(order))
+        ? () => onselect(order)
+        : undefined,
+  }}
+  <CardFace {...props} />
+{/snippet}
 
 <section class="hand" class:current={isCurrent}>
   <div class="head">
@@ -46,21 +75,14 @@
 
   <div class="cards">
     {#each hand as order (order)}
-      {@const card = game.cards[order]}
-      <CardFace
-        variant={game.variant}
-        identity={card.identity}
-        knowledge={card.knowledge}
-        possibilities={possibilities?.get(order)}
-        note={notes?.[order]}
-        slot={card.slot}
-        selected={selected?.has(order)}
-        highlight={highlight?.has(order)}
-        dim={selectable !== undefined && !selectable.has(order)}
-        onclick={onselect && (selectable === undefined || selectable.has(order))
-          ? () => onselect(order)
-          : undefined}
-      />
+      {#if botNotes !== undefined}
+        <div class="with-note">
+          {@render face(order)}
+          <span class="bot-note" class:empty={!botNotes[order]}>{botNotes[order] ?? ""}</span>
+        </div>
+      {:else}
+        {@render face(order)}
+      {/if}
     {:else}
       <span class="muted small">no cards</span>
     {/each}
@@ -108,5 +130,28 @@
     display: flex;
     gap: 6px;
     flex-wrap: wrap;
+  }
+
+  /* Bot notes only: a caption under each card, in the tracker's card width. */
+  .with-note {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    width: 44px;
+  }
+
+  .bot-note {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.55rem;
+    line-height: 1.15;
+    color: var(--accent);
+    text-align: center;
+    word-break: break-word;
+    min-height: 1.15em;
+  }
+
+  .bot-note.empty {
+    opacity: 0;
   }
 </style>

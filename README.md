@@ -12,6 +12,10 @@ the hands go face up at the end.
 **Live at <https://cupofjosiah.github.io/hanabi-tracker/>** · installable from
 the browser's "Add to home screen", and it works offline once loaded.
 
+There is a second copy at **<https://cupofjosiah.github.io/hanabi-tracker/bot/>**
+with an H-Group convention bot reading the table alongside you — see
+[The bot](#the-bot). The plain page has none of it.
+
 ## What it does
 
 - **Records a whole game** — every play, discard and clue, with automatic turn
@@ -59,6 +63,39 @@ the browser's "Add to home screen", and it works offline once loaded.
 
 A misplay is just a play — record it as one, exactly as hanab.live does; the
 strike follows from the card.
+
+## The bot
+
+`/bot/` is the same tracker with a convention bot alongside it. Same games,
+same device storage, same export — a game recorded on one page is already there
+on the other. **The plain page at `/` is untouched**: none of the bot's code is
+loaded there, and it looks and behaves exactly as it did before.
+
+- **A note under every card**, in scala-bot's format — `r1,r4,r5` for what it
+  could be, `[f]` called to play, `[cm]` chop moved, `kt` known trash, `??` when
+  the clue made no sense. These are **the bot's** notes: derived from the game
+  every time, never stored, never mixed into the note you type, and never in the
+  export.
+- **Suggested moves with a value each**, best first. Values are expected points
+  on one scale — a certain play is about 1.00, a clue is worth the plays it sets
+  up, a discard is worth the clue token minus what it throws away. Tap a move to
+  see the arithmetic that produced the number.
+- **Conventions you set.** H-Group levels 1&ndash;11, gated exactly as scala-bot
+  gates them, plus a Good Touch switch. Levels 1&ndash;5 are fully reasoned
+  about; the settings screen names the techniques above that it does not know
+  yet rather than pretending.
+
+The bot reads the table from **common knowledge** — what every seat can work
+out — so a note means the same thing to the player holding the card as it does
+to you. Where it cannot justify a clue under your conventions it says *unclear*
+instead of inventing a meaning.
+
+It is one move deep. scala-bot searches forward through the round before
+scoring, so for a real review still run the export through it:
+
+```
+scala-cli . --main-class scala_bot.analyze -- file=game.json convention=HGroup11
+```
 
 ## Getting the game out
 
