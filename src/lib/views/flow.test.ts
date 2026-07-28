@@ -90,6 +90,34 @@ describe("recording a game end to end", () => {
     expect(loadGames()[0].actions).toHaveLength(0);
   });
 
+  it("corrects a mistyped draw from the card's own sheet", async () => {
+    await startTwoPlayerGame();
+    await dealVisibleHand();
+
+    await user.click(screen.getByRole("button", { name: "Clue" }));
+    await user.click(screen.getByRole("button", { name: "1" }));
+    await user.click(screen.getByRole("button", { name: "Record clue" }));
+
+    // bo plays the red 1, and the wrong replacement card gets tapped in.
+    await user.click(screen.getByRole("button", { name: "Play" }));
+    await user.click(screen.getByRole("button", { name: "r1" }));
+    await user.click(screen.getByRole("button", { name: "Yellow 3" }));
+    expect(loadGames()[0].deck[10]).toEqual({ suitIndex: 1, rank: 3 });
+
+    // Tapping the card opens its sheet, which offers to change it.
+    await user.click(screen.getByRole("button", { name: "y3" }));
+    await user.click(screen.getByRole("button", { name: "Wrong card? Change it" }));
+    await user.click(screen.getByRole("button", { name: "Green 4" }));
+
+    const saved = loadGames()[0];
+    expect(saved.deck[10]).toEqual({ suitIndex: 2, rank: 4 });
+    // The turns already recorded are left alone.
+    expect(saved.actions).toEqual([
+      { type: 3, target: 1, value: 1 },
+      { type: 0, target: 9, value: 0 },
+    ]);
+  });
+
   it("asks which of our own cards a clue touched", async () => {
     await startTwoPlayerGame();
     await dealVisibleHand();

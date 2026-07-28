@@ -213,12 +213,19 @@ function minimumDeckLength(record: GameRecord): number {
   return record.players.length * handSize(record.players.length);
 }
 
-/** Fills in a card we could not see at the time — usually after the game. */
+/**
+ * Sets what a card actually is.
+ *
+ * Covers both filling in a card we could not see at the time and correcting one
+ * entered wrongly — a mistyped draw, say. Because the board is replayed from the
+ * deck, a correction re-runs the whole game: stacks, strikes and the score all
+ * follow the new card, which is why the finished flag is re-derived too.
+ */
 export function revealCard(record: GameRecord, order: number, identity: Identity): GameRecord {
   const deck = [...record.deck];
   if (order < 0 || order >= deck.length) return record;
   deck[order] = { ...identity };
-  return touch({ ...record, deck });
+  return finish(touch({ ...record, deck }));
 }
 
 export function revealMany(record: GameRecord, identities: ReadonlyMap<number, Identity>): GameRecord {
@@ -226,7 +233,7 @@ export function revealMany(record: GameRecord, identities: ReadonlyMap<number, I
   for (const [order, identity] of identities) {
     if (order >= 0 && order < deck.length) deck[order] = { ...identity };
   }
-  return touch({ ...record, deck });
+  return finish(touch({ ...record, deck }));
 }
 
 export function setNote(record: GameRecord, order: number, text: string): GameRecord {

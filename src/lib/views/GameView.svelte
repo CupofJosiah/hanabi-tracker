@@ -2,13 +2,14 @@
   import { untrack } from "svelte";
   import { app } from "../state/app.svelte";
   import { canDiscard, canGiveClue, stateOf } from "../hanabi/engine";
-  import { possibleIdentities, unseenCounts } from "../hanabi/deduce";
+  import { countsForCorrection, possibleIdentities, unseenCounts } from "../hanabi/deduce";
   import {
     endGame,
     recordClue,
     recordDiscard,
     recordPlay,
     rename,
+    revealCard,
     setNote,
     setupComplete,
     undo,
@@ -45,6 +46,8 @@
   let pending = $state<Pending>({ kind: "idle" });
   let menuOpen = $state(false);
   let detailOrder = $state<number | undefined>(undefined);
+  /** A card being corrected because it was recorded wrongly. */
+  let fixingOrder = $state<number | undefined>(undefined);
   let renaming = $state<string | undefined>(undefined);
 
   // Resuming a game skips the deal screen; a fresh one waits for a confirming tap
@@ -62,6 +65,11 @@
     }
     return map;
   });
+
+  // The card being corrected must not rule itself out of its own picker.
+  let correctionCounts = $derived(
+    fixingOrder === undefined ? counts : countsForCorrection(game, fixingOrder),
+  );
 
   let actorHand = $derived(game.hands[game.currentPlayerIndex] ?? []);
   let selectable = $derived(pending.kind === "select" ? new Set(actorHand) : undefined);
@@ -280,7 +288,45 @@
         oninput={(event) => save(setNote(record, order, event.currentTarget.value))}
       ></textarea>
     </label>
+
+    {#if isKnown(card.identity)}
+      <button
+        class="btn btn-block"
+        onclick={() => {
+          // `order` is derived from detailOrder, so read it before clearing that.
+          fixingOrder = order;
+          detailOrder = undefined;
+        }}
+      >
+        Wrong card? Change it
+      </button>
+      <p class="muted small">
+        Changing a card replays the rest of the game from it, so the stacks, strikes and score
+        follow. Nothing else you have recorded is lost.
+      </p>
+    {/if}
   </Sheet>
+{/if}
+
+{#if fixingOrder !== undefined}
+  {@const order = fixingOrder}
+  {@const card = game.cards[order]}
+  <IdentityPicker
+    variant={game.variant}
+    title="What is this card really?"
+    subtitle="{game.players[card.holder] ?? 'This card'}{card.holder >= 0
+      ? ` · slot ${card.slot}`
+      : card.location === 'played'
+        ? ' · played'
+        : ' · discarded'} — recorded as {identityName(game.variant, card.identity)}."
+    counts={correctionCounts}
+    onpick={(identity) => {
+      save(revealCard(record, order, identity));
+      fixingOrder = undefined;
+      app.toast(`Changed to ${identityName(game.variant, identity)}.`);
+    }}
+    onclose={() => (fixingOrder = undefined)}
+  />
 {/if}
 
 {#if menuOpen}

@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { stateOf } from "./engine";
+import { countsForCorrection, identityKey, unseenCounts } from "./deduce";
 import {
   createGame,
   initialDeckIndex,
   recordClue,
   recordDiscard,
   recordPlay,
+  revealCard,
   setDealtCard,
   setupComplete,
   undo,
@@ -92,6 +94,65 @@ describe("recording turns", () => {
     expect(stateOf(record).strikes).toBe(3);
     expect(stateOf(record).finished).toBe(true);
     expect(record.finishedAt).toBeTypeOf("number");
+  });
+});
+
+describe("correcting a card that was recorded wrongly", () => {
+  it("replays the rest of the game from the corrected card", () => {
+    let record = recordPlay(dealt(), { order: 4, reveal: RED_1 });
+    // bo draws — but the wrong card gets typed in.
+    record = recordDiscard(record, { order: 9, drawn: RED_2 });
+    expect(stateOf(record).cards[16].identity).toEqual(RED_2);
+
+    record = revealCard(record, 16, BLUE_3);
+    const state = stateOf(record);
+    expect(state.cards[16].identity).toEqual(BLUE_3);
+    // The turn it was drawn on, and everything recorded since, is untouched.
+    expect(record.actions).toHaveLength(2);
+    expect(state.hands[1][0]).toBe(16);
+  });
+
+  it("re-scores plays that turn out to have been a different card", () => {
+    let record = recordPlay(dealt(), { order: 4, reveal: RED_1 });
+    expect(stateOf(record).score).toBe(1);
+    expect(stateOf(record).strikes).toBe(0);
+
+    // It was not the red 1 after all: the same play is now a misplay.
+    record = revealCard(record, 4, RED_2);
+    expect(stateOf(record).score).toBe(0);
+    expect(stateOf(record).strikes).toBe(1);
+    expect(stateOf(record).playStacks[0]).toBe(0);
+  });
+
+  it("reopens a game whose ending depended on the wrong card", () => {
+    let record = createGame({ players: ["us", "bo"], ourPlayerIndex: 0, variantName: "No Variant" });
+    for (let slot = 1; slot <= 5; slot++) record = setDealtCard(record, 1, slot, RED_2);
+    record = recordPlay(record, { order: 4, reveal: RED_2 });
+    record = recordPlay(record, { order: 9, drawn: RED_2 });
+    record = recordPlay(record, { order: 3, reveal: RED_2 });
+    expect(stateOf(record).finished).toBe(true);
+
+    // The second of the three "misplays" was really the playable red 1, which
+    // makes the third a good play of the red 2 rather than the losing strike.
+    record = revealCard(record, 9, RED_1);
+    expect(stateOf(record).strikes).toBe(1);
+    expect(stateOf(record).score).toBe(2);
+    expect(stateOf(record).finished).toBe(false);
+    expect(record.finishedAt).toBeUndefined();
+  });
+
+  it("credits a card's own identity back so it can be corrected at all", () => {
+    let record = dealt();
+    // Fill the table with red 1s, using up every copy.
+    record = setDealtCard(record, 1, 1, RED_1);
+    record = setDealtCard(record, 1, 2, RED_1);
+    record = setDealtCard(record, 1, 3, RED_1);
+    const state = stateOf(record);
+
+    // With all three seen, an untouched card cannot be a red 1...
+    expect(unseenCounts(state).get(identityKey(RED_1))).toBe(0);
+    // ...but one of them can still be corrected to a red 1, having been one.
+    expect(countsForCorrection(state, 9).get(identityKey(RED_1))).toBe(1);
   });
 });
 

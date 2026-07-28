@@ -1,7 +1,12 @@
 <script lang="ts">
   import { app } from "../state/app.svelte";
   import { stateOf } from "../hanabi/engine";
-  import { autoResolve, possibleIdentities, unseenCounts } from "../hanabi/deduce";
+  import {
+    autoResolve,
+    countsForCorrection,
+    possibleIdentities,
+    unseenCounts,
+  } from "../hanabi/deduce";
   import { exportIssues, serialize } from "../hanabi/hanabLive";
   import { endGame, revealCard, revealMany } from "../hanabi/recording";
   import { isKnown, type GameRecord, type Identity } from "../hanabi/types";
@@ -199,8 +204,14 @@
     />
     <StatusStrip game={viewed} />
     {#each record.players as _player, playerIndex (playerIndex)}
-      <HandRow game={viewed} {playerIndex} notes={record.notes} />
+      <HandRow
+        game={viewed}
+        {playerIndex}
+        notes={record.notes}
+        onselect={(order) => (editing = order)}
+      />
     {/each}
+    <p class="muted small">Tap any card to change what it was.</p>
   </section>
 
   <HistoryPanel
@@ -217,15 +228,19 @@
 {#if editing !== undefined}
   {@const order = editing}
   {@const card = full.cards[order]}
+  {@const recorded = isKnown(card.identity)}
   <IdentityPicker
     variant={full.variant}
-    title={whose(card.holder, card.slot, card.location)}
-    subtitle="Only cards that fit the clues and the unseen copies are offered."
-    allowed={possibleIdentities(full, order, counts)}
-    {counts}
+    title={recorded ? "What is this card really?" : whose(card.holder, card.slot, card.location)}
+    subtitle={recorded
+      ? `${whose(card.holder, card.slot, card.location)} — recorded as ${identityName(full.variant, card.identity)}. Changing it replays the rest of the game from here.`
+      : "Only cards that fit the clues and the unseen copies are offered."}
+    allowed={recorded ? undefined : possibleIdentities(full, order, counts)}
+    counts={recorded ? countsForCorrection(full, order) : counts}
     onpick={(identity: Identity) => {
       app.put(revealCard(record, order, identity));
       editing = undefined;
+      if (recorded) app.toast(`Changed to ${identityName(full.variant, identity)}.`);
     }}
     onclose={() => (editing = undefined)}
   />

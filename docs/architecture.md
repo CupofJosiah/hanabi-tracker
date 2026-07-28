@@ -25,6 +25,11 @@ costs microseconds and buys three things for free:
 
 - **Undo** — drop the last action, truncate the deck back to what had been drawn.
 - **History scrubbing** — `replay(record, n)` is the board after `n` actions.
+- **Correcting a card in place** — `revealCard()` writes one deck entry and the
+  whole game re-runs from it. A draw typed in wrongly three turns ago can be
+  fixed without unwinding the turns since, and stacks, strikes, score and even
+  whether the game is over all follow. `countsForCorrection()` credits the card's
+  own identity back so it does not rule itself out of its own picker.
 - **Crash safety** — the saved record *is* the game; there is no derived state
   that can be saved in a torn condition.
 

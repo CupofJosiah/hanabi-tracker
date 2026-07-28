@@ -32,6 +32,21 @@ export function unseenCopies(state: GameState, identity: Identity): number {
   return unseenCounts(state).get(identityKey(identity)) ?? 0;
 }
 
+/**
+ * Unseen counts as if one card had never been entered, for correcting a card
+ * that was recorded wrong. Without crediting its own identity back, a card
+ * would block itself from being changed to something it already claims to be.
+ */
+export function countsForCorrection(state: GameState, order: number): Map<string, number> {
+  const counts = unseenCounts(state);
+  const identity = state.cards[order]?.identity;
+  if (identity && isKnown(identity)) {
+    const key = identityKey(identity);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
 export function matchesKnowledge(
   variant: Variant,
   identity: Identity,

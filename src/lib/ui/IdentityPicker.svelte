@@ -19,9 +19,17 @@
 
   let { variant, title, subtitle, allowed, counts, onpick, onclose }: Props = $props();
 
-  let allowedKeys = $derived(allowed ? new Set(allowed.map(identityKey)) : undefined);
+  // An earlier mis-entry can rule out the card you actually need, so the
+  // narrowing is always escapable rather than a dead end.
+  let relaxed = $state(false);
+  let narrowing = $derived(
+    allowed !== undefined ||
+      (counts !== undefined && [...counts.values()].some((left) => left <= 0)),
+  );
+  let allowedKeys = $derived(allowed && !relaxed ? new Set(allowed.map(identityKey)) : undefined);
 
   function enabled(identity: Identity): boolean {
+    if (relaxed) return true;
     if (allowedKeys && !allowedKeys.has(identityKey(identity))) return false;
     if (counts && (counts.get(identityKey(identity)) ?? 0) <= 0) return false;
     return true;
@@ -56,6 +64,12 @@
       {/each}
     {/each}
   </div>
+
+  {#if narrowing}
+    <button class="btn btn-ghost small" onclick={() => (relaxed = !relaxed)}>
+      {relaxed ? "Hide cards that cannot be there" : "Show every card anyway"}
+    </button>
+  {/if}
 </Sheet>
 
 <style>

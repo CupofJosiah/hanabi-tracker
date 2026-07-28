@@ -41,7 +41,14 @@ the browser's "Add to home screen", and it works offline once loaded.
    - *Clue*: pick the seat and the colour or rank. For other players the touched
      cards are worked out from the deck; when the clue is aimed at **you**, tap
      the slots they pointed at.
-4. **Undo** in the header removes the last action, including the card drawn with it.
+4. **Fixing a mistake**:
+   - **Undo** in the header removes the last action, including the card drawn
+     with it.
+   - **Tapped in the wrong card?** Tap that card any time — on the board, or on
+     the review screen's replay — and its sheet has *Wrong card? Change it*. The
+     rest of the game is replayed from the corrected card, so the stacks,
+     strikes and score follow, and nothing else you recorded is lost. Handy when
+     a draw gets mistyped and you only notice three turns later.
 5. **Review & export** when the game ends.
 
 A misplay is just a play — record it as one, exactly as hanab.live does; the
