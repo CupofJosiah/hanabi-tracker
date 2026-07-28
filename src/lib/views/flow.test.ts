@@ -118,6 +118,27 @@ describe("recording a game end to end", () => {
     ]);
   });
 
+  it("shows what the holder can tell about a card", async () => {
+    await startTwoPlayerGame();
+    await dealVisibleHand();
+
+    // bo's slot 1 is the red 1; tell him "1".
+    await user.click(screen.getByRole("button", { name: "Clue" }));
+    await user.click(screen.getByRole("button", { name: "1" }));
+    await user.click(screen.getByRole("button", { name: "Record clue" }));
+
+    await user.click(screen.getByRole("button", { name: "r1" }));
+    const sheet = within(screen.getByRole("dialog", { name: /bo/ }));
+
+    expect(sheet.getByText("What bo can tell")).toBeDefined();
+    expect(sheet.getByText(/Told/)).toBeDefined();
+    // He knows it is a 1, but not which: every 1 is still on from his seat, and
+    // on an empty board all of them are playable.
+    expect(sheet.getByText("Could be one of 5")).toBeDefined();
+    expect(sheet.getByText("r1 y1 g1 b1 p1")).toBeDefined();
+    expect(sheet.getByText(/all\s+playable now/)).toBeDefined();
+  });
+
   it("asks which of our own cards a clue touched", async () => {
     await startTwoPlayerGame();
     await dealVisibleHand();

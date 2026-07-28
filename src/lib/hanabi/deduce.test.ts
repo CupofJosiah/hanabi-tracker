@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { stateOf } from "./engine";
-import { autoResolve, possibleIdentities, unseenCopies } from "./deduce";
-import { createGame, recordClue, setDealtCard } from "./recording";
+import { autoResolve, holderView, possibleIdentities, unseenCopies } from "./deduce";
+import { createGame, recordClue, revealCard, setDealtCard } from "./recording";
 import type { GameRecord, Identity } from "./types";
 import { identityName, getVariant } from "./variants";
 
@@ -53,6 +53,62 @@ describe("possibleIdentities", () => {
     const state = stateOf(table([R1, R1, R1, R5, { suitIndex: 1, rank: 1 }]));
     // 25 identities minus the five we can see copies of being exhausted.
     expect(possibleIdentities(state, 0)).toHaveLength(23);
+  });
+});
+
+describe("holderView", () => {
+  const Y1 = { suitIndex: 1, rank: 1 };
+  const B1 = { suitIndex: 3, rank: 1 };
+
+  it("does not let a player see their own hand", () => {
+    let record = table([R1, R1, R1, R5, Y1]);
+    record = recordClue(record, 1, { kind: "rank", value: 1 });
+    const state = stateOf(record);
+
+    // We can see all three red 1s, so we know nobody else holds one.
+    expect(unseenCopies(state, R1)).toBe(0);
+
+    // Bo cannot: they are his own cards, so from his seat any 1 is still on.
+    const view = holderView(state, 9)!;
+    expect(view.viewer).toBe(1);
+    expect(show(view.possibilities)).toEqual(["b1", "g1", "p1", "r1", "y1"]);
+  });
+
+  it("uses our seat's own reading for our own cards", () => {
+    const record = table([R1, R1, R1, R5, Y1]);
+    const state = stateOf(record);
+    const view = holderView(state, 4)!;
+    expect(view.viewer).toBe(0);
+    expect(view.approximate).toBe(false);
+    expect(show(view.possibilities)).toEqual(show(possibleIdentities(state, 4)));
+  });
+
+  it("flags that a player may know more while our own hand is hidden", () => {
+    let record = table([R1, R1, R1, R5, Y1]);
+    record = recordClue(record, 1, { kind: "rank", value: 1 });
+    expect(holderView(stateOf(record), 9)!.approximate).toBe(true);
+
+    // Once our cards are filled in, what bo can see is exactly known — and the
+    // three blue 1s in our hand come off his list.
+    for (const [order, identity] of [
+      [0, B1],
+      [1, B1],
+      [2, B1],
+      [3, { suitIndex: 3, rank: 2 }],
+      [4, { suitIndex: 3, rank: 3 }],
+    ] as const) {
+      record = revealCard(record, order, identity);
+    }
+
+    const view = holderView(stateOf(record), 9)!;
+    expect(view.approximate).toBe(false);
+    expect(show(view.possibilities)).toEqual(["g1", "p1", "r1", "y1"]);
+  });
+
+  it("has no view of a card that has left every hand", () => {
+    const record = table([R1, R1, R1, R5, Y1]);
+    const state = stateOf(record);
+    expect(holderView(state, 99)).toBeUndefined();
   });
 });
 

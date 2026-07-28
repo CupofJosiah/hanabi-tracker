@@ -392,3 +392,24 @@ export function isDead(state: GameState, identity: Identity): boolean {
   const total = state.variant.cardCounts[identity.suitIndex]?.[identity.rank - 1] ?? 0;
   return discardedCopies(state, identity) >= total;
 }
+
+/** True when one copy is left and the suit still needs it. */
+export function isCritical(state: GameState, identity: Identity): boolean {
+  const total = state.variant.cardCounts[identity.suitIndex]?.[identity.rank - 1] ?? 0;
+  if (state.playStacks[identity.suitIndex] >= identity.rank) return false;
+  return total - discardedCopies(state, identity) === 1;
+}
+
+export type IdentityStatus = "playable" | "played" | "dead" | "later";
+
+/** Where an identity stands against the board as it is now. */
+export function identityStatus(state: GameState, identity: Identity): IdentityStatus {
+  const top = state.playStacks[identity.suitIndex] ?? 0;
+  if (top >= identity.rank) return "played";
+  if (top === identity.rank - 1) return "playable";
+  // Unreachable if every copy of some rank between the stack and this one is gone.
+  for (let rank = top + 1; rank < identity.rank; rank++) {
+    if (isDead(state, { suitIndex: identity.suitIndex, rank })) return "dead";
+  }
+  return "later";
+}

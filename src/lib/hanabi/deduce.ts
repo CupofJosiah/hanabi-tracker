@@ -86,6 +86,62 @@ export function possibleIdentities(
   );
 }
 
+export interface HolderView {
+  /** The seat this is seen from — whoever is holding the card. */
+  viewer: number;
+  /** What the holder can narrow their card down to. */
+  possibilities: Identity[];
+  /**
+   * True when the holder can see cards we cannot — ours — so they may have
+   * ruled out more than this. Goes away once our own hand is filled in.
+   */
+  approximate: boolean;
+}
+
+/**
+ * What the player holding a card can work out about it.
+ *
+ * They cannot see their own hand, so their pool is every identity minus the
+ * copies visible *to them*: the other hands, the stacks and the discards. That
+ * is then narrowed by the clues that touched (and pointedly missed) the card.
+ *
+ * Answers the question that actually matters at the table — "did that clue tell
+ * them what I meant?" — rather than what we happen to know.
+ */
+export function holderView(state: GameState, order: number): HolderView | undefined {
+  const card = state.cards[order];
+  if (!card || card.holder < 0) return undefined;
+  const viewer = card.holder;
+
+  const counts = new Map<string, number>();
+  for (const identity of allIdentities(state.variant)) {
+    counts.set(identityKey(identity), copiesOf(state.variant, identity));
+  }
+
+  let approximate = false;
+  for (const other of state.cards) {
+    if (!other) continue;
+    if (!isKnown(other.identity)) {
+      // A card the holder can see but we cannot weakens this estimate.
+      if (other.holder >= 0 && other.holder !== viewer) approximate = true;
+      continue;
+    }
+    if (other.holder === viewer) continue; // hidden from the holder, including this card
+    const key = identityKey(other.identity);
+    counts.set(key, Math.max(0, (counts.get(key) ?? 0) - 1));
+  }
+
+  return {
+    viewer,
+    approximate,
+    possibilities: allIdentities(state.variant).filter(
+      (identity) =>
+        (counts.get(identityKey(identity)) ?? 0) > 0 &&
+        matchesKnowledge(state.variant, identity, card.knowledge),
+    ),
+  };
+}
+
 export interface UnknownCard {
   order: number;
   /** Seat holding it, or -1 if it has already been played or discarded. */

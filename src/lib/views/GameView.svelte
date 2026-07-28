@@ -1,7 +1,14 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { app } from "../state/app.svelte";
-  import { canDiscard, canGiveClue, stateOf } from "../hanabi/engine";
+  import {
+    canDiscard,
+    canGiveClue,
+    identityStatus,
+    isCritical,
+    stateOf,
+    type IdentityStatus,
+  } from "../hanabi/engine";
   import { countsForCorrection, possibleIdentities, unseenCounts } from "../hanabi/deduce";
   import {
     endGame,
@@ -19,6 +26,7 @@
   import CardFace from "../ui/CardFace.svelte";
   import IdentityPicker from "../ui/IdentityPicker.svelte";
   import Sheet from "../ui/Sheet.svelte";
+  import CardInsight from "../game/CardInsight.svelte";
   import ClueSheet from "../game/ClueSheet.svelte";
   import DealPanel from "../game/DealPanel.svelte";
   import DiscardPanel from "../game/DiscardPanel.svelte";
@@ -42,6 +50,13 @@
 
   /** Dims a hand entirely while another seat's card is being picked. */
   const NO_CARDS: Set<number> = new Set();
+
+  const statusWording: Record<IdentityStatus, string> = {
+    playable: "playable right now",
+    played: "already played — trash",
+    dead: "can never be played — trash",
+    later: "needed later",
+  };
 
   let pending = $state<Pending>({ kind: "idle" });
   let menuOpen = $state(false);
@@ -263,22 +278,20 @@
       />
       <div class="stack grow">
         {#if isKnown(card.identity)}
+          <p class="small muted">It is really</p>
           <p><strong>{identityName(game.variant, card.identity)}</strong></p>
-        {:else if maybe.length === 0}
-          <p class="small warn">No card fits the clues recorded for this one — check the history.</p>
-        {:else}
-          <p class="small muted">Could be</p>
-          <p class="maybe">{maybe.map((id) => identityName(game.variant, id)).join("  ")}</p>
-        {/if}
-        {#if card.knowledge.clued}
           <p class="small muted">
-            Clued{card.knowledge.positiveRanks.length
-              ? `: ${card.knowledge.positiveRanks.join(", ")}`
+            {statusWording[identityStatus(game, card.identity)]}{isCritical(game, card.identity)
+              ? " · last copy"
               : ""}
           </p>
+        {:else}
+          <p class="small muted">Yours, so you have never seen it.</p>
         {/if}
       </div>
     </div>
+
+    <CardInsight {game} {order} />
 
     <label class="stack">
       <span class="small muted">Note (exported with the game)</span>
@@ -412,15 +425,5 @@
     display: flex;
     gap: 12px;
     align-items: flex-start;
-  }
-
-  .maybe {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.9rem;
-    word-break: break-word;
-  }
-
-  .warn {
-    color: var(--warn);
   }
 </style>

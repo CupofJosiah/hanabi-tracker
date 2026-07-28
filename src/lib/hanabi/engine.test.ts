@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import fixture from "./fixtures/live-game-4p.json";
-import { replay, stateOf } from "./engine";
+import { identityStatus, isCritical, replay, stateOf } from "./engine";
 import { fromHanabLive } from "./hanabLive";
 import { ActionType, handSize, type GameAction, type Identity } from "./types";
 import { getVariant } from "./variants";
@@ -100,6 +100,81 @@ describe("clue bookkeeping", () => {
     expect(state.cards[4].knowledge.positiveRanks).toEqual([1]);
     expect(state.cards[2].knowledge.positiveRanks).toEqual([1]);
     expect(state.cards[3].knowledge.negativeRanks).toEqual([1]);
+  });
+});
+
+describe("reading a card against the board", () => {
+  const variant = getVariant("No Variant");
+  const RED = 0;
+
+  // Seat 1 throws away both red 2s, capping red at 1.
+  const state = replay({
+    players: ["us", "bo"],
+    ourPlayerIndex: 0,
+    variant,
+    deck: [
+      { suitIndex: 1, rank: 1 },
+      { suitIndex: 1, rank: 2 },
+      { suitIndex: 1, rank: 3 },
+      { suitIndex: 1, rank: 4 },
+      { suitIndex: 1, rank: 5 },
+      { suitIndex: 2, rank: 1 },
+      { suitIndex: 2, rank: 2 },
+      { suitIndex: 2, rank: 3 },
+      { suitIndex: RED, rank: 2 },
+      { suitIndex: RED, rank: 2 },
+      { suitIndex: 3, rank: 1 },
+      { suitIndex: 3, rank: 2 },
+    ],
+    actions: [
+      { type: ActionType.RankClue, target: 1, value: 1 },
+      { type: ActionType.Discard, target: 9, value: 0 },
+      { type: ActionType.RankClue, target: 1, value: 1 },
+      { type: ActionType.Discard, target: 8, value: 0 },
+    ],
+    touchedByAction: {},
+    options: { deckPlays: false, emptyClues: false },
+  });
+
+  it("calls the bottom of an untouched stack playable", () => {
+    expect(identityStatus(state, { suitIndex: RED, rank: 1 })).toBe("playable");
+  });
+
+  it("calls anything above a lost card unreachable", () => {
+    expect(identityStatus(state, { suitIndex: RED, rank: 3 })).toBe("dead");
+    expect(identityStatus(state, { suitIndex: RED, rank: 5 })).toBe("dead");
+    // A different suit is untouched by red's misfortune.
+    expect(identityStatus(state, { suitIndex: 1, rank: 3 })).toBe("later");
+  });
+
+  it("calls a card already on the stack trash", () => {
+    const played = replay({
+      players: ["us", "bo"],
+      ourPlayerIndex: 0,
+      variant,
+      deck: [
+        ...Array.from({ length: 9 }, () => ({ suitIndex: 2, rank: 5 })),
+        { suitIndex: RED, rank: 1 },
+        { suitIndex: 4, rank: 1 },
+      ],
+      actions: [
+        { type: ActionType.RankClue, target: 1, value: 1 },
+        { type: ActionType.Play, target: 9, value: 0 },
+      ],
+      touchedByAction: {},
+      options: { deckPlays: false, emptyClues: false },
+    });
+    expect(played.playStacks[RED]).toBe(1);
+    expect(identityStatus(played, { suitIndex: RED, rank: 1 })).toBe("played");
+    expect(identityStatus(played, { suitIndex: RED, rank: 2 })).toBe("playable");
+  });
+
+  it("marks the last copy of a card the stack still needs", () => {
+    // Both red 2s are gone, so nothing red above 1 is critical any more.
+    expect(isCritical(state, { suitIndex: RED, rank: 2 })).toBe(false);
+    // Every 5 is critical from the start.
+    expect(isCritical(state, { suitIndex: 1, rank: 5 })).toBe(true);
+    expect(isCritical(state, { suitIndex: 1, rank: 1 })).toBe(false);
   });
 });
 
