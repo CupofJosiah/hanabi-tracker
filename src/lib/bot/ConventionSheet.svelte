@@ -16,6 +16,7 @@
     missingTechniques,
     type Technique,
   } from "./conventions";
+  import { countOverrides } from "./overrides";
 
   interface Props {
     onclose: () => void;
@@ -27,7 +28,7 @@
 
   let settings = $derived(bot.settings);
   let missing = $derived(missingTechniques(settings));
-  let corrections = $derived(Object.keys(bot.overrides).length);
+  let corrections = $derived(countOverrides(bot.overrides));
 
   function state(technique: Technique): "on" | "off" | "missing" {
     if (settings.level < technique.level) return "off";

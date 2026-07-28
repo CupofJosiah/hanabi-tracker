@@ -62,8 +62,8 @@ export const TECHNIQUES: readonly Technique[] = [
   {
     name: "Sarcastic discards",
     level: 3,
-    implemented: false,
-    blurb: "Discarding a known duplicate to pass the identity along.",
+    implemented: true,
+    blurb: "Throwing away a card you were known to hold points at the other copy.",
   },
   {
     name: "Chop moves",
@@ -85,14 +85,24 @@ export const TECHNIQUES: readonly Technique[] = [
   },
   { name: "Last resorts", level: 7, implemented: false, blurb: "Locked-hand escapes." },
   { name: "Endgame solving", level: 8, implemented: false, blurb: "Exact endgame lines." },
-  { name: "Stalling", level: 9, implemented: false, blurb: "Ranked stall clues when locked." },
+  {
+    name: "Stalling",
+    level: 9,
+    implemented: true,
+    blurb: "A clue with nothing to say at 8 tokens is read as a stall, not a mistake.",
+  },
   {
     name: "Special discards",
     level: 10,
     implemented: false,
     blurb: "Gentleman's and baton discards.",
   },
-  { name: "Bluffs", level: 11, implemented: false, blurb: "Blind plays of a different card." },
+  {
+    name: "Bluffs",
+    level: 11,
+    implemented: true,
+    blurb: "A blind play is read as playable-something, not necessarily the promised card.",
+  },
 ];
 
 export const MAX_LEVEL = 11;

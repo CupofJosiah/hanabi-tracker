@@ -67,6 +67,14 @@ export interface Thought {
   /** `possible` narrowed by conventions. May be empty when a clue made no sense. */
   inferred: Set<Ord>;
   status: CardStatus;
+  /**
+   * True when the card must play *through* something else first — the covered
+   * layer of a layered finesse. It is blind-playing, but not the card that was
+   * promised, so nothing may be concluded about the promise from it.
+   */
+  hidden: boolean;
+  /** True when the blind play is a different suit entirely: a bluff. */
+  bluffed: boolean;
   /** True once this card was focused by a clue, which is what promises anything. */
   focused: boolean;
   /** True when its inferences were wiped by a fix clue; stops re-inferring. */
@@ -92,12 +100,32 @@ export function newThought(order: number, possible: Set<Ord>, drawnTurn: number)
     possible,
     inferred: new Set(possible),
     status: "none",
+    hidden: false,
+    bluffed: false,
     focused: false,
     reset: false,
     narrowed: false,
     overridden: false,
     drawnTurn,
   };
+}
+
+/** Puts a card back to meaning nothing in particular. */
+export function resetThought(thought: Thought): void {
+  thought.status = "none";
+  thought.hidden = false;
+  thought.bluffed = false;
+  thought.narrowed = false;
+  thought.inferred = new Set(thought.possible);
+}
+
+/** True while the card is one the table is counting on to play. */
+export function isBlindPlaying(thought: Thought): boolean {
+  return thought.status === "finessed";
+}
+
+export function isPlayPromised(thought: Thought): boolean {
+  return thought.status === "called to play" || thought.status === "finessed";
 }
 
 /** The inferences if there are any, else the raw possibilities — scala-bot's `possibilities`. */
@@ -123,12 +151,59 @@ export function trashOrds(state: GameState): Set<Ord> {
 
 /** Ordinals that would go straight onto a stack right now. */
 export function playableOrds(state: GameState): Set<Ord> {
+  return playableAgainst(state.playStacks);
+}
+
+/** Ordinals playable against an arbitrary set of stacks — real or hypothetical. */
+export function playableAgainst(stacks: readonly number[]): Set<Ord> {
   const out = new Set<Ord>();
-  for (let suitIndex = 0; suitIndex < state.variant.suits.length; suitIndex++) {
-    const rank = state.playStacks[suitIndex] + 1;
+  for (let suitIndex = 0; suitIndex < stacks.length; suitIndex++) {
+    const rank = stacks[suitIndex] + 1;
     if (rank <= 5) out.add(ordOf({ suitIndex, rank }));
   }
   return out;
+}
+
+/**
+ * The stacks as they will stand once everything already promised has played.
+ *
+ * scala-bot's `hypoStacks`, and the reason a chain of connections can be found
+ * at all: once r1 is called to play, r2 counts as reachable, so a clue on r3
+ * can be read as "r2 is prompted, r1 is already coming". Without this the bot
+ * only ever sees one rank past the real stacks and every deeper clue reads as
+ * nonsense.
+ *
+ * Only cards narrowed to a single identity advance a stack. A card that could
+ * be either of two playables tells the table it will play, but not what onto.
+ */
+export function hypoStacks(
+  state: GameState,
+  thoughts: Map<number, Thought>,
+  exclude: ReadonlySet<number> = new Set(),
+): number[] {
+  const stacks = [...state.playStacks];
+  const promised: Ord[] = [];
+  for (const [order, thought] of thoughts) {
+    if (exclude.has(order)) continue;
+    const card = state.cards[order];
+    if (!card || card.holder < 0 || !isPlayPromised(thought)) continue;
+    const pool = possibilities(thought);
+    if (pool.size === 1) promised.push([...pool][0]);
+  }
+
+  // Repeat rather than sort: the promises are unordered, and r1 may only become
+  // placeable after r2's holder has been counted.
+  for (let pass = 0; pass < promised.length + 1; pass++) {
+    let changed = false;
+    for (const ord of promised) {
+      const identity = identityOfOrd(ord);
+      if (stacks[identity.suitIndex] !== identity.rank - 1) continue;
+      stacks[identity.suitIndex] = identity.rank;
+      changed = true;
+    }
+    if (!changed) break;
+  }
+  return stacks;
 }
 
 /**
@@ -228,7 +303,22 @@ export function refreshPossible(state: GameState, thoughts: Map<number, Thought>
       thought.possible = next;
       // A card no convention has spoken about can be anything it could be; one
       // that has been read is held to that reading, narrowed by the new count.
-      thought.inferred = thought.narrowed ? intersect(thought.inferred, next) : new Set(next);
+      const held = thought.narrowed ? intersect(thought.inferred, next) : new Set(next);
+
+      if (held.size > 0) {
+        thought.inferred = held;
+        continue;
+      }
+
+      // The reading and the count now contradict each other, so the reading was
+      // wrong. Keeping an empty note would leave the card reading `??` for the
+      // rest of the game; the honest thing is to let go of the reading and say
+      // what the clues alone still allow.
+      thought.inferred = new Set(next);
+      thought.narrowed = false;
+      thought.reset = true;
+      thought.status = "none";
+      changed = true;
     }
 
     if (!changed) break;
@@ -302,15 +392,22 @@ export function chopOf(
   return undefined;
 }
 
-/** The finesse position: the newest card carrying no information. */
+/**
+ * The finesse position: the newest card carrying no information.
+ *
+ * `taken` holds orders already spoken for by connections found so far, so a
+ * clue asking for two blind plays from one hand walks down the hand rather than
+ * naming the same card twice.
+ */
 export function finessePosition(
   state: GameState,
   thoughts: Map<number, Thought>,
   playerIndex: number,
+  taken: ReadonlySet<number> = new Set(),
 ): number | undefined {
   for (const order of handOrders(state, playerIndex)) {
     const card = state.cards[order];
-    if (!card || card.knowledge.clued) continue;
+    if (!card || card.knowledge.clued || taken.has(order)) continue;
     const status = thoughts.get(order)?.status;
     if (status === "chop moved" || status === "finessed") continue;
     return order;

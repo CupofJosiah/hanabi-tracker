@@ -15,15 +15,17 @@ import {
   deleteOverrides,
   loadOverrides,
   saveOverrides,
+  NO_OVERRIDES,
   type BotOverride,
   type BotOverrides,
 } from "./overrides";
+import type { Ord } from "./empathy";
 import type { BotSettings } from "./conventions";
 
 class BotState {
   settings = $state<BotSettings>(loadBotSettings());
-  /** Corrections for the game currently open, keyed by card order. */
-  overrides = $state<BotOverrides>({});
+  /** Corrections for the game currently open: cards by order, clues by action. */
+  overrides = $state<BotOverrides>(NO_OVERRIDES);
 
   #gameId: string | undefined;
 
@@ -41,16 +43,29 @@ class BotState {
 
   correct(gameId: string, order: number, override: BotOverride | undefined): void {
     this.openGame(gameId);
-    const next = { ...this.overrides };
-    if (override === undefined) delete next[order];
-    else next[order] = override;
-    this.overrides = next;
-    saveOverrides(gameId, next);
+    const cards = { ...this.overrides.cards };
+    if (override === undefined) delete cards[order];
+    else cards[order] = override;
+    this.#write(gameId, { ...this.overrides, cards });
+  }
+
+  /** Picks which of the readings the bot found is the one your table meant. */
+  readClue(gameId: string, actionIndex: number, identity: Ord | undefined): void {
+    this.openGame(gameId);
+    const clues = { ...this.overrides.clues };
+    if (identity === undefined) delete clues[actionIndex];
+    else clues[actionIndex] = { identity };
+    this.#write(gameId, { ...this.overrides, clues });
   }
 
   clearCorrections(gameId: string): void {
-    this.overrides = {};
+    this.overrides = { cards: {}, clues: {} };
     deleteOverrides(gameId);
+  }
+
+  #write(gameId: string, next: BotOverrides): void {
+    this.overrides = next;
+    saveOverrides(gameId, next);
   }
 }
 

@@ -41,7 +41,7 @@ describe("the bot page", () => {
     render(BotApp);
     await startGame();
 
-    const panel = within(screen.getByRole("region", { name: /bot/i }));
+    const panel = within(screen.getByRole("region", { name: "Bot suggestions" }));
     // A playable r1 sitting in claire's hand is worth cluing.
     const red = panel.getByRole("button", { name: /Clue Red to claire/ });
     expect(red).toBeDefined();
@@ -133,6 +133,26 @@ describe("the bot page", () => {
     expect(window.localStorage.getItem(`hanabi-tracker/v1/bot-overrides/${saved.id}`)).toContain(
       "chop moved",
     );
+  });
+
+  it("shows what it made of each clue and lets you pick another reading", async () => {
+    render(BotApp);
+    await startGame();
+
+    await user.click(screen.getByRole("button", { name: "Clue" }));
+    await user.click(screen.getByRole("button", { name: "Red" }));
+    await user.click(screen.getByRole("button", { name: "Record clue" }));
+
+    const log = within(screen.getByRole("region", { name: "Bot clue readings" }));
+    await user.click(log.getByRole("button", { name: "show" }));
+
+    // The clue is listed with what the bot took it to mean.
+    const entry = log.getByRole("button", { name: /to claire/ });
+    expect(entry.textContent).toContain("play clue");
+
+    // And opening it offers the readings it found, with the one it took marked.
+    await user.click(entry);
+    expect(log.getByRole("button", { name: /r1 — play it/ })).toBeDefined();
   });
 
   it("lets the conventions be changed, and says what it cannot do", async () => {

@@ -19,6 +19,7 @@ import {
   chopOf,
   criticalOrds,
   handOrders,
+  hypoStacks,
   identityOfOrd,
   ordOf,
   playableOrds,
@@ -120,7 +121,7 @@ function evaluatePlay(analysis: BotAnalysis, order: number): Suggestion | undefi
     move: { kind: "play", order },
     value,
     label: `Play slot ${slotOf(state, order)}`,
-    detail: names.length <= 4 ? names.join(", ") : `${names.length} candidates`,
+    detail: names.length <= 5 ? names.join(", ") : `${names.length} candidates`,
     reasons,
     risky: chance < 1,
   };
@@ -173,7 +174,14 @@ function evaluateDiscard(analysis: BotAnalysis, order: number): Suggestion | und
   };
 }
 
-/** Cards the clue newly asks someone to play, and whether they really can. */
+/**
+ * Cards the clue newly asks someone to play, and whether they really can.
+ *
+ * "Can" is measured against the stacks as they will stand once the promises
+ * already outstanding have been kept, not as they stand now — a clue setting up
+ * r3 behind an r2 somebody is already going to play is a good clue, and scoring
+ * it against the bare stacks would call it a lie.
+ */
 function newPlayPromises(
   before: BotAnalysis,
   afterThoughts: Map<number, Thought>,
@@ -184,9 +192,8 @@ function newPlayPromises(
   const blind: number[] = [];
 
   for (const [order, thought] of afterThoughts) {
-    const wasPromised =
-      before.thoughts.get(order)?.status === "called to play" ||
-      before.thoughts.get(order)?.status === "finessed";
+    const previous = before.thoughts.get(order)?.status;
+    const wasPromised = previous === "called to play" || previous === "finessed";
     const nowPromised = thought.status === "called to play" || thought.status === "finessed";
     if (wasPromised || !nowPromised) continue;
 
@@ -196,7 +203,9 @@ function newPlayPromises(
       blind.push(order);
       continue;
     }
-    const top = after.playStacks[card.identity.suitIndex] ?? 0;
+    // Excluding the card itself, or its own promise would vouch for it.
+    const stacks = hypoStacks(after, afterThoughts, new Set([order]));
+    const top = stacks[card.identity.suitIndex] ?? 0;
     if (top === card.identity.rank - 1) good.push(order);
     else bad.push(order);
     if (thought.status === "finessed") blind.push(order);
@@ -293,6 +302,20 @@ function evaluateClue(
   if (interp.kind === "unclear") {
     value -= 0.5;
     reasons.push("no convention reading fits this clue (-0.50)");
+  }
+
+  if (interp.kind === "stall") {
+    // Not worthless — it buys a turn — but it is the move you make when there
+    // is nothing to say, so it should never beat one that says something.
+    value -= 0.2;
+    reasons.push("says nothing; a stall (-0.20)");
+  }
+
+  // A clue with more than one reading leaves the table guessing which.
+  if (interp.chosen.length > 1 && interp.kind === "play") {
+    const cost = Math.min(interp.chosen.length - 1, 3) * 0.15;
+    value -= cost;
+    reasons.push(`${interp.chosen.length} readings — ambiguous (${fmt(-cost)})`);
   }
 
   // Good touch: fresh cards under a clue are worth something even without a play.

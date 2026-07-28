@@ -80,18 +80,32 @@ loaded there, and it looks and behaves exactly as it did before.
   on one scale — a certain play is about 1.00, a clue is worth the plays it sets
   up, a discard is worth the clue token minus what it throws away. Tap a move to
   see the arithmetic that produced the number.
+- **What each clue meant**, and what it is still waiting for. A clue that asks
+  someone to blind-play is a claim about the next few turns; the panel says
+  whose turn it is waiting on and for which card.
+- **It changes its mind.** If the blind play never comes, the reading was wrong,
+  and the bot drops it and re-reads the whole game without it — so a finesse
+  that nobody played into stops poisoning every note downstream of it.
 - **Conventions you set.** H-Group levels 1&ndash;11, gated exactly as scala-bot
   gates them, plus a Good Touch switch. Levels 1&ndash;5 are fully reasoned
   about; the settings screen names the techniques above that it does not know
   yet rather than pretending.
-- **Corrections, when your table plays off-book.** Tap a card, hit *The bot has
-  this wrong*, and say what it is actually doing — playing, blind playing, chop
-  moved, trash, nothing — and which card it is, if you know. See below.
+- **Corrections, when your table plays off-book.** Tell it what a card is doing,
+  or pick a different reading for a whole clue. See below.
 
 ### Correcting the bot
 
 Tables play off-book, and a clue that means something at your table means
-nothing to the convention. Rather than have the bot guess, tell it:
+nothing to the convention. Rather than have the bot guess, tell it. There are
+two ways, and the quick one is usually the second.
+
+**Pick a different reading for the clue.** A clue almost never has one possible
+meaning — the bot finds several and takes the one needing the least work. Open
+*What each clue meant*, tap the clue, and its other readings are right there:
+"r2 — play it", "g2 — after finesse g1 (claire slot 2)". Tap the one your table
+meant and everything follows from it. Tap it again to hand the clue back.
+
+**Or say what one card is doing:**
 
 1. **Tap the card**, then **The bot has this wrong**.
 2. **What is it doing?** Playing · Blind playing · Saved · Chop moved · Trash ·
@@ -123,8 +137,8 @@ out — so a note means the same thing to the player holding the card as it does
 to you. Where it cannot justify a clue under your conventions it says *unclear*
 instead of inventing a meaning.
 
-It is one move deep. scala-bot searches forward through the round before
-scoring, so for a real review still run the export through it:
+Move values are one move deep. scala-bot searches forward through the round
+before scoring, so for a real review still run the export through it:
 
 ```
 scala-cli . --main-class scala_bot.analyze -- file=game.json convention=HGroup11

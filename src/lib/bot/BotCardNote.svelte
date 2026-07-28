@@ -27,9 +27,16 @@
 
   let detail = $derived(noteDetail(analysis, order));
   let thought = $derived(analysis.thoughts.get(order));
-  let override = $derived(bot.overrides[order]);
+  let override = $derived(bot.overrides.cards[order]);
   let clue = $derived(analysis.interps.filter((interp) => interp.touched.includes(order)).at(-1));
   let correcting = $state(false);
+
+  /** The promise the table is still waiting on this card to keep, if any. */
+  let awaited = $derived(
+    analysis.waiting
+      .map((wc) => ({ wc, link: wc.connections[wc.index] }))
+      .find((entry) => entry.link?.order === order),
+  );
 
   /** Identities worth offering as "it is really this", newest reading first. */
   let candidates = $derived.by<Ord[]>(() => {
@@ -107,6 +114,23 @@
 
     {#if clue && !thought?.overridden}
       <p class="small muted">Last clue on it: {clue.detail}.</p>
+    {/if}
+
+    {#if awaited?.link}
+      <p class="small muted">
+        The table is waiting on this: {awaited.link.kind === "finesse"
+          ? "a blind play"
+          : awaited.link.kind}
+        of {identityName(analysis.state.variant, identityOfOrd(awaited.link.identity))}. If it does
+        not come, the bot drops that reading and works out what the clue meant instead.
+      </p>
+    {/if}
+
+    {#if thought?.bluffed}
+      <p class="small muted">
+        It plays, but the clue may have been a bluff — so the note keeps every playable card it
+        could be rather than claiming to know which.
+      </p>
     {/if}
 
     {#if thought?.overridden}

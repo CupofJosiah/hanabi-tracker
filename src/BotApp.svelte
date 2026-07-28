@@ -12,6 +12,7 @@
   import GameView from "./lib/views/GameView.svelte";
   import ReviewView from "./lib/views/ReviewView.svelte";
   import BotCardNote from "./lib/bot/BotCardNote.svelte";
+  import ClueLog from "./lib/bot/ClueLog.svelte";
   import ConventionSheet from "./lib/bot/ConventionSheet.svelte";
   import SuggestionPanel from "./lib/bot/SuggestionPanel.svelte";
   import { analyseGame, bot, notesFor } from "./lib/bot/bot.svelte";
@@ -56,6 +57,7 @@
       <GameView record={game} {botNotes}>
         {#snippet aside()}
           <SuggestionPanel record={game} {analysis} />
+          <ClueLog record={game} {analysis} />
         {/snippet}
         {#snippet cardAside(order)}
           <BotCardNote record={game} {analysis} {order} />

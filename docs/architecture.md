@@ -117,33 +117,86 @@ The reasoning is layered like scala-bot's:
 
 ```
 empathy.ts     common knowledge: possible/inferred identity sets per card,
-               card counting, Good Touch, chop and finesse position
-hgroup.ts      what each clue meant: focus, fix, save vs play, and the
-               prompt/finesse search that makes an unplayable card make sense
+               card counting, Good Touch, chop, finesse position, hypo stacks
+connect.ts     the prompt / finesse / layered-finesse search that makes an
+               unplayable card make sense, and Occam's razor over the results
+hgroup.ts      what each clue meant: focus, fix, save vs play, chop moves,
+               sarcastic discards, and the re-analysis loop
+waiting.ts     promises still outstanding, and what refutes one
 overrides.ts   your corrections, when the table plays off-book
 notes.ts       the note string, in scala-bot's format
 suggest.ts     candidate moves and what each is worth
 ```
 
-Two decisions worth knowing about. **The pool is common knowledge, not ours** —
-a note has to mean the same thing to the person holding the card, or it is a
-peek rather than a convention. And **Occam's razor decides between readings**:
-of the identities a clue could be promising, only those needing the fewest blind
-plays survive, which is why a red clue on a fresh card reads as `r1` and not
-"r1, or r2 off a finesse".
+**The pool is common knowledge, not ours** — a note has to mean the same thing
+to the person holding the card, or it is a peek rather than a convention.
+
+**Occam's razor decides between readings.** Of the identities a clue could be
+promising, only those needing the fewest blind plays survive, which is why a red
+clue on a fresh card reads as `r1` and not "r1, or r2 off a finesse". Saves cost
+nothing, so a 2 on a chop beats any reading that needs someone to work something
+out — which is exactly why it is a save.
+
+**Hypothetical stacks are what make connections findable.** `hypoStacks()` is
+the board once everything already promised has played, and every reachability
+question is asked against it rather than the bare stacks. Without it the bot can
+only ever see one rank past what is down, and a clue on r3 behind a promised r2
+reads as nonsense.
+
+### Reinterpretation
+
+A clue that asks for a blind play is not a fact, it is a claim about the next
+few turns, so `interpretClue` registers a `WaitingConnection` for it. Every
+subsequent action is judged against the outstanding ones (`updateWaiting`): the
+card plays and the promise advances; somebody else plays that identity and it
+advances too; the card becomes impossible, or the player whose turn it was
+clued or discarded instead, and the promise is **refuted**.
+
+Refutation does not patch the notes. The identity is struck out for that clue
+and **the whole game is analysed again** from the top — scala-bot's rewind. That
+costs a few extra passes over a hundred actions, which is microseconds, and it
+buys the thing that matters: everything downstream follows from the new reading
+instead of being layered on top of the old one. `analyse()` loops until nothing
+new is refuted, capped at six passes; each pass strikes out at least one
+reading, so it terminates on its own.
+
+`ClueInterp` keeps `alternatives` (every reading found), `chosen` (the ones that
+survived the razor) and `ruledOut` (the ones since refuted). That list is what
+the clue log shows and what a clue correction picks from.
+
+### Levels
 
 Levels gate techniques with scala-bot's own numbers (`object Level`): 2 finesses,
-3 fix, 4 chop moves, 5 layered. Levels 1–5 are implemented; 6–11 are listed in
-the settings screen as not-yet rather than silently ignored, and a clue the bot
-cannot justify comes back as `unclear`.
+3 fix and sarcastic, 4 chop moves, 5 layered, 9 stalling, 11 bluffs. The ceiling
+is 11 because that is scala-bot's `MAX_H_LEVEL`; trash moves sit at 14 there and
+so are deliberately absent here rather than half-guessed.
+
+Bluffs are level 11 and are modelled where they actually bite. From common
+knowledge a bluff and a finesse are the *same clue* — nothing in the clue tells
+them apart — so the difference is written onto the blind-playing card instead:
+its note keeps every playable identity it could be, not just the one the clue
+pointed at. Only the first blind play of a reading can be a bluff, matching
+scala-bot's `finalizeConns`.
+
+Levels 1–5 are fully reasoned about; what is missing above that is listed in the
+settings screen rather than silently ignored, and a clue the bot cannot justify
+comes back as `unclear`.
 
 ### Corrections
 
-A correction attaches to a **card**, not to a clue. That is the whole design
-decision: what each card means already *is* the bot's state, so pinning a card
-propagates to the notes, to the prompt/finesse search run for the next clue, and
-to the move values, with no second mechanism to keep in sync. "That clue was a
-chop move" is expressed by marking the chop card as chop moved.
+There are two, and they meet in the same place. A **card** correction says what
+one card means; a **clue** correction picks between readings the bot itself
+found. The card one is the general primitive — what each card means already *is*
+the bot's state, so pinning a card propagates to the notes, to the
+prompt/finesse search run for the next clue, and to the move values, with no
+second mechanism to keep in sync. "That clue was a chop move" is expressed by
+marking the chop card as chop moved.
+
+The clue one exists because the general primitive was too slow to use. The
+common case is not "the bot has no idea", it is "the bot found both readings and
+took the wrong one" — and there, naming the identity is one tap against several.
+A picked reading is fed in as `reading` and skips the razor entirely, then
+writes its own connections exactly as the bot's own choice would.
 
 `CardStatus` carries one status scala-bot does not have: `saved`. scala-bot has
 no need of it, because a save is the *absence* of a play promise on a clued card
@@ -161,12 +214,18 @@ outright over `possible`: an identity you name survives even when the clues
 appear to exclude it, since a disagreement there means the model of the table is
 wrong, not you.
 
-Each correction carries the `fromAction` count at which it was made and applies
-only from that point, so scrubbing back still shows what the table knew at the
-time. They are stored per game under their own key
-(`hanabi-tracker/v1/bot-overrides/<id>`), never in the `GameRecord`, which keeps
-them out of the export and lets them survive undo and an in-place card fix —
-orders are stable, so the key stays valid.
+Each card correction carries the `fromAction` count at which it was made and
+applies only from that point, so scrubbing back still shows what the table knew
+at the time. Corrections are applied *after* the clue at that index has been
+read, not before, or a correction made on the turn a clue landed would rewrite
+the card the clue was about before the bot got to look at it.
+
+Both kinds are stored per game under one key
+(`hanabi-tracker/v1/bot-overrides/<id>`) as `{ cards, clues }`, never in the
+`GameRecord`, which keeps them out of the export and lets them survive undo and
+an in-place card fix — orders and action indices are stable, so the keys stay
+valid. `normaliseOverrides()` accepts the older flat card map, since saved games
+outlive their storage format.
 
 ## Layout
 

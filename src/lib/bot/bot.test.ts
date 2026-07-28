@@ -10,6 +10,7 @@ import { fromHanabLive } from "../hanabi/hanabLive";
 import { ActionType, type GameAction, type GameRecord, type Identity } from "../hanabi/types";
 import { DEFAULT_BOT_SETTINGS, missingTechniques, type BotSettings } from "./conventions";
 import { analyse } from "./hgroup";
+import type { BotOverride, BotOverrides } from "./overrides";
 import { botNote } from "./notes";
 import { suggestMoves } from "./suggest";
 
@@ -44,6 +45,11 @@ function game(deck: Identity[], actions: GameAction[] = []): GameRecord {
     notes: {},
     options: { deckPlays: false, emptyClues: false },
   };
+}
+
+/** Card corrections on their own, which is what most of these tests want. */
+function cards(map: Record<number, BotOverride>): BotOverrides {
+  return { cards: map, clues: {} };
 }
 
 const UNSEEN: Identity = { suitIndex: -1, rank: -1 };
@@ -143,6 +149,161 @@ describe("reading a clue", () => {
   });
 });
 
+describe("reading a clue in the light of later turns", () => {
+  /**
+   * A rank-2 clue on bo's slot 1 (g2) only makes sense as a finesse: he has to
+   * blind-play the g1 in slot 2 first. That is the reading — until it isn't.
+   */
+  function finesseGame() {
+    return game(
+      [
+        ...ourHand,
+        ...bo(id(BLUE, 4), id(BLUE, 3), id(YELLOW, 4), id(GREEN, 1), id(GREEN, 2)),
+        ...Array.from({ length: 10 }, () => id(YELLOW, 3)),
+      ],
+      [{ type: ActionType.RankClue, target: 1, value: 2 }],
+    );
+  }
+
+  it("waits on the blind play a finesse asks for", () => {
+    const analysis = analyse(finesseGame(), SETTINGS);
+    expect(analysis.waiting).toHaveLength(1);
+    const link = analysis.waiting[0].connections[analysis.waiting[0].index];
+    expect(link.kind).toBe("finesse");
+    expect(link.order).toBe(8); // bo's slot 2, the g1
+  });
+
+  it("drops the reading when the blind play never comes", () => {
+    const record = finesseGame();
+    expect(botNote(analyse(record, SETTINGS), 9)).toBe("[f] [g2]");
+
+    // bo discards instead of blind-playing, so the finesse was never there.
+    record.actions.push({ type: ActionType.Discard, target: 5, value: 0 });
+    const after = analyse(record, SETTINGS);
+
+    expect(after.reinterpretations).toHaveLength(1);
+    expect(after.reinterpretations[0].reason).toContain("discarded");
+    expect(after.interps.at(-1)?.ruledOut).toContain(GREEN * 5 + 1); // g2 struck out
+
+    // With its only reading gone, the clue no longer promises anything, and the
+    // card it had asked to blind-play stops claiming to be a g1.
+    expect(after.interps.at(-1)?.kind).toBe("unclear");
+    expect(botNote(after, 8)).not.toContain("[f]");
+    expect(after.waiting).toHaveLength(0);
+  });
+
+  it("keeps the reading when the blind play does come", () => {
+    const record = finesseGame();
+    record.actions.push({ type: ActionType.Play, target: 8, value: 0 }); // bo blind-plays g1
+
+    const after = analyse(record, SETTINGS);
+    expect(after.reinterpretations).toHaveLength(0);
+    expect(after.state.playStacks[GREEN]).toBe(1);
+    expect(botNote(after, 9)).toBe("[f] [g2]");
+  });
+
+  it("reads a discard of a card everyone knew you held as sarcastic", () => {
+    // bo is clued red on an empty board, so the table knows he holds r1.
+    const record = game(
+      [
+        ...ourHand,
+        ...bo(id(BLUE, 4), id(BLUE, 3), id(GREEN, 4), id(YELLOW, 4), id(RED, 1)),
+        ...Array.from({ length: 12 }, () => id(GREEN, 3)),
+      ],
+      [
+        { type: ActionType.ColorClue, target: 1, value: RED },
+        { type: ActionType.RankClue, target: 0, value: 1 }, // bo clues our slot 1
+        { type: ActionType.Discard, target: 0, value: 0 }, // us, passing the turn back
+        { type: ActionType.Discard, target: 9, value: 0 }, // bo throws away the known r1
+      ],
+    );
+    record.touchedByAction = { 1: [4] };
+
+    const analysis = analyse(record, SETTINGS);
+    expect(analysis.discards).toHaveLength(1);
+    expect(analysis.discards[0].kind).toBe("sarcastic");
+    expect(analysis.discards[0].orders).toEqual([4]);
+
+    // Throwing it away said where the other one is: our clued 1 is the r1.
+    expect(botNote(analysis, 4)).toBe("[f] [r1]");
+  });
+});
+
+describe("choosing between readings", () => {
+  /**
+   * Red is at 1 and bo holds g1 behind a g2. A rank-2 clue on the g2 has two
+   * readings: r2, which plays right now, and g2, which needs the blind play.
+   * Occam's razor takes the cheap one.
+   */
+  function twoReadings() {
+    return game(
+      [
+        // Our own slot 1 is an r1 we play ourselves, which puts red on 1 without
+        // giving bo's hand any negative-red information to reason from.
+        UNSEEN,
+        UNSEEN,
+        UNSEEN,
+        UNSEEN,
+        id(RED, 1),
+        ...bo(id(BLUE, 4), id(BLUE, 3), id(YELLOW, 4), id(GREEN, 1), id(GREEN, 2)),
+        ...Array.from({ length: 10 }, () => id(YELLOW, 4)),
+      ],
+      [
+        { type: ActionType.Play, target: 4, value: 0 }, // us: red is at 1
+        { type: ActionType.RankClue, target: 0, value: 5 }, // bo: touches nothing, passes the turn
+        { type: ActionType.RankClue, target: 1, value: 2 },
+      ],
+    );
+  }
+
+  it("keeps the readings it rejected, not just the one it took", () => {
+    const analysis = analyse(twoReadings(), SETTINGS);
+    const interp = analysis.interps.at(-1)!;
+
+    expect(interp.chosen).toEqual([RED * 5 + 1]); // r2, no work needed
+    const offered = interp.alternatives.map((fp) => fp.identity);
+    expect(offered).toContain(GREEN * 5 + 1); // g2, off the finesse
+    expect(interp.alternatives.find((fp) => fp.identity === GREEN * 5 + 1)?.connections).toHaveLength(
+      1,
+    );
+  });
+
+  it("takes the reading you pick over the one it preferred", () => {
+    const record = twoReadings();
+    expect(botNote(analyse(record, SETTINGS), 9)).toBe("[f] [r2]");
+
+    const corrected = analyse(record, SETTINGS, {
+      cards: {},
+      clues: { 2: { identity: GREEN * 5 + 1 } },
+    });
+
+    expect(botNote(corrected, 9)).toBe("[f] [g2]");
+    // And the blind play it implies is written onto the card behind it.
+    expect(botNote(corrected, 8)).toBe("[f] [g1]");
+    expect(corrected.interps.at(-1)?.overridden).toBe(true);
+  });
+
+  it("reads a blind play as playable-something once bluffs are on", () => {
+    const record = twoReadings();
+    const bluffs = analyse(record, { ...SETTINGS, level: 11 }, {
+      cards: {},
+      clues: { 2: { identity: GREEN * 5 + 1 } },
+    });
+
+    // At level 11 the blind play might be a bluff, so the card is known to be
+    // playable without being known to be the g1 the clue pointed at. The rank-2
+    // clue said it is not a 2, so what is left is every playable 1.
+    const note = botNote(bluffs, 8);
+    expect(note).toBe("[f] [y1,g1,b1,p1]");
+    expect(bluffs.thoughts.get(8)?.bluffed).toBe(true);
+
+    // At level 5 there are no bluffs, so the promise is taken at its word.
+    expect(botNote(analyse(record, SETTINGS, { cards: {}, clues: { 2: { identity: GREEN * 5 + 1 } } }), 8)).toBe(
+      "[f] [g1]",
+    );
+  });
+});
+
 describe("suggesting a move", () => {
   it("puts a certain play at the top, worth about a point", () => {
     // We are told "1" on our slot 1, which on an empty board is a play clue.
@@ -238,10 +399,15 @@ describe("running over a real game", () => {
       return tally;
     }, {});
 
-    // A real table playing H-Group: 23 of the 24 clues get a reading, and the
-    // mix is what you would expect — mostly play clues, a few saves on chop,
-    // and a couple of clues whose job was to stop a misplay.
-    expect(kinds).toEqual({ play: 18, save: 3, fix: 2, unclear: 1 });
+    // A real table playing H-Group: 22 of the 24 clues get a reading, and the
+    // mix is what you would expect — mostly play clues, a good number of saves
+    // on chop, and one clue whose job was to stop a misplay.
+    //
+    // The saves are the interesting number. Every 2 and 5 clued on a chop is
+    // one, and reading those as play clues (which is what happens without the
+    // save rules) is how a bot talks you into misplaying a card you were being
+    // asked to hold.
+    expect(kinds).toEqual({ play: 13, save: 8, fix: 1, unclear: 2 });
   });
 
   it("never writes into the game's own notes", () => {
@@ -271,18 +437,18 @@ describe("correcting the bot", () => {
     expect(botNote(analyse(record, SETTINGS), 9)).toBe("[f] [r1]");
 
     // At this table the red clue meant the r4 behind it, not r1.
-    const corrected = analyse(record, SETTINGS, {
+    const corrected = analyse(record, SETTINGS, cards({
       9: { identity: 3 * 1 + 0, fromAction: 1 }, // r4 -> suit 0, rank 4 -> ord 3
-    });
+    }));
     expect(botNote(corrected, 9)).toBe("[f] [r4]");
     expect(corrected.thoughts.get(9)?.overridden).toBe(true);
   });
 
   it("takes your word for what a card is doing", () => {
     const record = cluedRed();
-    const corrected = analyse(record, SETTINGS, {
+    const corrected = analyse(record, SETTINGS, cards({
       9: { status: "chop moved", fromAction: 1 },
-    });
+    }));
     // No longer called to play; it is being held back instead.
     expect(botNote(corrected, 9)).toBe("[cm] [r1]");
   });
@@ -290,9 +456,9 @@ describe("correcting the bot", () => {
   it("keeps an identity you name even when the clues seem to rule it out", () => {
     const record = cluedRed();
     // Blue is not red — the clue says so — but if you say it is b2, it is b2.
-    const corrected = analyse(record, SETTINGS, {
+    const corrected = analyse(record, SETTINGS, cards({
       9: { identity: BLUE * 5 + 1, fromAction: 1 },
-    });
+    }));
     expect(botNote(corrected, 9)).toBe("[f] [b2]");
   });
 
@@ -306,9 +472,9 @@ describe("correcting the bot", () => {
     expect(before.find((s) => s.move.kind === "play")).toBeUndefined();
 
     // Tell the bot our own slot 1 is the r2, and it offers to play it.
-    const corrected = analyse(record, SETTINGS, {
+    const corrected = analyse(record, SETTINGS, cards({
       4: { status: "called to play", identity: RED * 5 + 1, fromAction: 2 },
-    });
+    }));
     const play = suggestMoves(record, corrected).find((s) => s.move.kind === "play");
     expect(play?.move).toEqual({ kind: "play", order: 4 });
     expect(play?.value).toBeGreaterThan(0.9);
@@ -321,7 +487,7 @@ describe("correcting the bot", () => {
     const plain = analyse(record, SETTINGS);
     expect(plain.thoughts.get(4)!.inferred.size).toBeGreaterThan(20);
 
-    const corrected = analyse(record, SETTINGS, { 4: { status: "saved", fromAction: 1 } });
+    const corrected = analyse(record, SETTINGS, cards({ 4: { status: "saved", fromAction: 1 } }));
     const inferred = corrected.thoughts.get(4)!.inferred;
 
     // Saying it was saved rules out everything not worth saving. On a fresh
@@ -333,16 +499,16 @@ describe("correcting the bot", () => {
   it("never empties a note by calling an unsavable card saved", () => {
     const record = cluedRed();
     // bo's clued red 1 is not worth saving, so the reading is left alone.
-    const corrected = analyse(record, SETTINGS, { 9: { status: "saved", fromAction: 1 } });
+    const corrected = analyse(record, SETTINGS, cards({ 9: { status: "saved", fromAction: 1 } }));
     expect(botNote(corrected, 9)).toBe("r1");
   });
 
   it("applies from when you said it, not backwards", () => {
     const record = cluedRed();
     // A correction recorded in the future has not happened yet.
-    const later = analyse(record, SETTINGS, {
+    const later = analyse(record, SETTINGS, cards({
       9: { identity: BLUE * 5 + 1, fromAction: 5 },
-    });
+    }));
     expect(botNote(later, 9)).toBe("[f] [r1]");
     expect(later.thoughts.get(9)?.overridden).toBe(false);
   });
@@ -351,10 +517,14 @@ describe("correcting the bot", () => {
 describe("convention settings", () => {
   it("is honest about the techniques it does not implement", () => {
     expect(missingTechniques({ ...DEFAULT_BOT_SETTINGS, level: 1 })).toEqual([]);
-    expect(missingTechniques({ ...DEFAULT_BOT_SETTINGS, level: 5 })).toHaveLength(1);
+    // Everything through layered finesses is reasoned about.
+    expect(missingTechniques({ ...DEFAULT_BOT_SETTINGS, level: 5 })).toEqual([]);
     const atEleven = missingTechniques({ ...DEFAULT_BOT_SETTINGS, level: 11 }).map((t) => t.name);
-    expect(atEleven).toContain("Bluffs");
     expect(atEleven).toContain("Tempo clues");
+    expect(atEleven).toContain("Endgame solving");
+    // These two are in, so they must not be claimed as missing.
+    expect(atEleven).not.toContain("Bluffs");
+    expect(atEleven).not.toContain("Sarcastic discards");
   });
 
   it("stops looking for finesses below level 2", () => {

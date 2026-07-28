@@ -6,14 +6,16 @@
  * with `??`. Rather than trying to guess, it lets you say what a card means and
  * then reasons from that.
  *
- * A correction is attached to a **card**, not to a clue, because the bot's whole
- * state is what each card means: pin that and the notes, the connections it
- * searches for and the move values all follow. "That clue was a chop move" is
- * said by marking the chop card as chop moved.
+ * There are two kinds. A **card** correction says what one card means, and is
+ * the general one: the bot's whole state is what each card means, so pinning a
+ * card propagates to the notes, to the connections it searches for next and to
+ * the move values. A **clue** correction picks between readings the bot itself
+ * came up with — when it settled on the wrong one of two, saying which is far
+ * quicker than describing the cards one at a time.
  *
- * Corrections live in their own localStorage key, keyed by game and by order.
- * They are never part of the game record, so they cannot reach the export, and
- * because orders are stable they survive undo and a corrected card.
+ * Corrections live in their own localStorage key, keyed by game. They are never
+ * part of the game record, so they cannot reach the export, and because orders
+ * and action indices are stable they survive undo and a corrected card.
  */
 import type { CardStatus } from "./empathy";
 import type { Ord } from "./empathy";
@@ -32,7 +34,39 @@ export interface BotOverride {
   fromAction: number;
 }
 
-export type BotOverrides = Record<number, BotOverride>;
+/** Which of the readings a clue could carry is the one your table meant. */
+export interface ClueOverride {
+  /** The identity the focus really was, as an ordinal. */
+  identity: Ord;
+}
+
+export interface BotOverrides {
+  /** Keyed by card order. */
+  cards: Record<number, BotOverride>;
+  /** Keyed by the clue's index in `record.actions`. */
+  clues: Record<number, ClueOverride>;
+}
+
+export const NO_OVERRIDES: BotOverrides = { cards: {}, clues: {} };
+
+/**
+ * Accepts either shape: the current one, or the flat card map written before
+ * clue corrections existed. Saved games outlive their storage format.
+ */
+export function normaliseOverrides(value: unknown): BotOverrides {
+  if (typeof value !== "object" || value === null) return { cards: {}, clues: {} };
+  const record = value as Record<string, unknown>;
+  if (typeof record.cards === "object" && record.cards !== null) {
+    return {
+      cards: record.cards as Record<number, BotOverride>,
+      clues:
+        typeof record.clues === "object" && record.clues !== null
+          ? (record.clues as Record<number, ClueOverride>)
+          : {},
+    };
+  }
+  return { cards: record as unknown as Record<number, BotOverride>, clues: {} };
+}
 
 const PREFIX = "hanabi-tracker/v1/bot-overrides/";
 
@@ -49,18 +83,17 @@ function storage(): Storage | undefined {
 
 export function loadOverrides(gameId: string): BotOverrides {
   const raw = storage()?.getItem(PREFIX + gameId);
-  if (!raw) return {};
+  if (!raw) return { cards: {}, clues: {} };
   try {
-    const parsed = JSON.parse(raw) as BotOverrides;
-    return typeof parsed === "object" && parsed !== null ? parsed : {};
+    return normaliseOverrides(JSON.parse(raw));
   } catch {
-    return {};
+    return { cards: {}, clues: {} };
   }
 }
 
 export function saveOverrides(gameId: string, overrides: BotOverrides): void {
   try {
-    if (Object.keys(overrides).length === 0) storage()?.removeItem(PREFIX + gameId);
+    if (countOverrides(overrides) === 0) storage()?.removeItem(PREFIX + gameId);
     else storage()?.setItem(PREFIX + gameId, JSON.stringify(overrides));
   } catch {
     // A correction that cannot be saved still applies for this session.
@@ -76,5 +109,5 @@ export function deleteOverrides(gameId: string): void {
 }
 
 export function countOverrides(overrides: BotOverrides): number {
-  return Object.keys(overrides).length;
+  return Object.keys(overrides.cards).length + Object.keys(overrides.clues).length;
 }
