@@ -89,6 +89,52 @@ describe("the bot page", () => {
     expect(JSON.stringify(saved)).not.toContain("[f]");
   });
 
+  it("lets you overrule a card's reading from its own sheet", async () => {
+    render(BotApp);
+    await startGame();
+
+    await user.click(screen.getByRole("button", { name: "Clue" }));
+    await user.click(screen.getByRole("button", { name: "Red" }));
+    await user.click(screen.getByRole("button", { name: "Record clue" }));
+
+    await user.click(screen.getByRole("button", { name: "r1" }));
+    const sheet = within(screen.getByRole("dialog", { name: /claire/ }));
+    expect(sheet.getByText("[f] [r1]")).toBeDefined();
+
+    // At this table that clue meant something else: the card is chop moved.
+    await user.click(sheet.getByRole("button", { name: "The bot has this wrong" }));
+    await user.click(sheet.getByRole("button", { name: "Chop moved" }));
+
+    expect(sheet.getByText("[cm] [r1]")).toBeDefined();
+    expect(sheet.getByText("yours")).toBeDefined();
+
+    // And it can be taken back.
+    await user.click(sheet.getByRole("button", { name: "Clear correction" }));
+    expect(sheet.getByText("[f] [r1]")).toBeDefined();
+  });
+
+  it("keeps corrections off the game record and out of the export", async () => {
+    render(BotApp);
+    await startGame();
+
+    await user.click(screen.getByRole("button", { name: "Clue" }));
+    await user.click(screen.getByRole("button", { name: "Red" }));
+    await user.click(screen.getByRole("button", { name: "Record clue" }));
+
+    await user.click(screen.getByRole("button", { name: "r1" }));
+    const sheet = within(screen.getByRole("dialog", { name: /claire/ }));
+    await user.click(sheet.getByRole("button", { name: "The bot has this wrong" }));
+    await user.click(sheet.getByRole("button", { name: "Chop moved" }));
+
+    const saved = loadGames()[0];
+    expect(JSON.stringify(saved)).not.toContain("chop moved");
+    expect(saved.notes).toEqual({});
+    // It is on the device, just not in the game.
+    expect(window.localStorage.getItem(`hanabi-tracker/v1/bot-overrides/${saved.id}`)).toContain(
+      "chop moved",
+    );
+  });
+
   it("lets the conventions be changed, and says what it cannot do", async () => {
     render(BotApp);
     await startGame();

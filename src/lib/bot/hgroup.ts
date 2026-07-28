@@ -40,6 +40,7 @@ import {
   type Thought,
 } from "./empathy";
 import { levelAllows, type BotSettings } from "./conventions";
+import type { BotOverrides } from "./overrides";
 
 export interface Connection {
   kind: "known" | "prompt" | "finesse";
@@ -76,8 +77,39 @@ export interface BotAnalysis {
   thoughts: Map<number, Thought>;
   interps: ClueInterp[];
   settings: BotSettings;
+  overrides: BotOverrides;
   /** How many actions were replayed, so a hypothetical can be appended after them. */
   actionCount: number;
+}
+
+/**
+ * Puts your corrections on top of whatever the bot worked out.
+ *
+ * Applied at the end of every step rather than once at the end, so a card you
+ * have pinned is already pinned when the next clue is interpreted — the bot
+ * looks for prompts and finesses through your reading, not around it.
+ *
+ * Your word wins outright: an identity you name is kept even when the clues on
+ * the card appear to rule it out, because if the two disagree it is the bot's
+ * model of the table that is wrong, not you.
+ */
+function applyOverrides(
+  thoughts: Map<number, Thought>,
+  overrides: BotOverrides,
+  appliedActions: number,
+): void {
+  for (const [key, override] of Object.entries(overrides)) {
+    if (override.fromAction > appliedActions) continue;
+    const thought = thoughts.get(Number(key));
+    if (!thought) continue;
+
+    thought.overridden = true;
+    if (override.status !== undefined) thought.status = override.status;
+    if (override.identity !== undefined) {
+      thought.inferred = new Set([override.identity]);
+      thought.narrowed = true;
+    }
+  }
 }
 
 export function cloneThoughts(thoughts: Map<number, Thought>): Map<number, Thought> {
@@ -285,9 +317,16 @@ function syncThoughts(state: GameState, thoughts: Map<number, Thought>, turn: nu
   }
 }
 
-function settle(state: GameState, thoughts: Map<number, Thought>, settings: BotSettings): void {
+function settle(
+  state: GameState,
+  thoughts: Map<number, Thought>,
+  settings: BotSettings,
+  overrides: BotOverrides = {},
+  appliedActions = Number.POSITIVE_INFINITY,
+): void {
   refreshPossible(state, thoughts);
   applyGoodTouch(state, thoughts, settings.goodTouch);
+  applyOverrides(thoughts, overrides, appliedActions);
 }
 
 /**
@@ -324,6 +363,7 @@ function detectFix(
 export function analyse(
   record: GameRecord,
   settings: BotSettings,
+  overrides: BotOverrides = {},
   through = Number.POSITIVE_INFINITY,
 ): BotAnalysis {
   const variant = getVariant(record.variantName);
@@ -341,7 +381,7 @@ export function analyse(
   let state = replay(base, 0);
   const thoughts = new Map<number, Thought>();
   syncThoughts(state, thoughts, 0);
-  settle(state, thoughts, settings);
+  settle(state, thoughts, settings, overrides, 0);
 
   const interps: ClueInterp[] = [];
 
@@ -349,6 +389,7 @@ export function analyse(
     const action = record.actions[actionIndex];
     const before = state;
     const clue = clueOf(action);
+    const done = actionIndex + 1;
 
     if (clue) {
       const touched = touchedOrders(before, action.target, clue, record.touchedByAction[actionIndex]);
@@ -358,9 +399,9 @@ export function analyse(
       const priorPossible = new Map<number, Set<Ord>>();
       for (const [order, thought] of thoughts) priorPossible.set(order, new Set(thought.possible));
 
-      state = replay(base, actionIndex + 1);
+      state = replay(base, done);
       syncThoughts(state, thoughts, state.turn);
-      settle(state, thoughts, settings);
+      settle(state, thoughts, settings, overrides, done);
 
       interps.push(
         interpretClue(
@@ -376,16 +417,16 @@ export function analyse(
           settings,
         ),
       );
-      settle(state, thoughts, settings);
+      settle(state, thoughts, settings, overrides, done);
     } else {
       // A play or discard settles that card and clears what it was promising.
-      state = replay(base, actionIndex + 1);
+      state = replay(base, done);
       syncThoughts(state, thoughts, state.turn);
-      settle(state, thoughts, settings);
+      settle(state, thoughts, settings, overrides, done);
     }
   }
 
-  return { state, thoughts, interps, settings, actionCount: limit };
+  return { state, thoughts, interps, settings, overrides, actionCount: limit };
 }
 
 /**
@@ -429,7 +470,7 @@ export function hypotheticalClue(
   for (const [order, thought] of thoughts) priorPossible.set(order, new Set(thought.possible));
 
   syncThoughts(after, thoughts, after.turn);
-  settle(after, thoughts, analysis.settings);
+  settle(after, thoughts, analysis.settings, analysis.overrides, actions.length);
   const interp = interpretClue(
     before,
     after,
@@ -442,7 +483,7 @@ export function hypotheticalClue(
     priorPossible,
     analysis.settings,
   );
-  settle(after, thoughts, analysis.settings);
+  settle(after, thoughts, analysis.settings, analysis.overrides, actions.length);
 
   return { interp, thoughts, after };
 }

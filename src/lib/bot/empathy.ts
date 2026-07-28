@@ -70,6 +70,8 @@ export interface Thought {
    * stays self-healing when the count changes underneath it.
    */
   narrowed: boolean;
+  /** True when you overruled the bot on this card, so the UI can say so. */
+  overridden: boolean;
   /** Turn the card was drawn, for finding the newest card in a hand. */
   drawnTurn: number;
 }
@@ -83,6 +85,7 @@ export function newThought(order: number, possible: Set<Ord>, drawnTurn: number)
     focused: false,
     reset: false,
     narrowed: false,
+    overridden: false,
     drawnTurn,
   };
 }

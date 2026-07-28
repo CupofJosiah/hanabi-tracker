@@ -84,6 +84,34 @@ loaded there, and it looks and behaves exactly as it did before.
   gates them, plus a Good Touch switch. Levels 1&ndash;5 are fully reasoned
   about; the settings screen names the techniques above that it does not know
   yet rather than pretending.
+- **Corrections, when your table plays off-book.** Tap a card, hit *The bot has
+  this wrong*, and say what it is actually doing — playing, blind playing, chop
+  moved, trash, nothing — and which card it is, if you know. See below.
+
+### Correcting the bot
+
+Tables play off-book, and a clue that means something at your table means
+nothing to the convention. Rather than have the bot guess, tell it:
+
+1. **Tap the card**, then **The bot has this wrong**.
+2. **What is it doing?** Playing · Blind playing · Chop moved · Trash · Nothing
+   special.
+3. **Is it a card you know?** Tap one of the identities it could be.
+
+A correction is attached to a **card**, not to a clue, because what each card
+means *is* the bot's state — pin that and the notes, the connections it goes
+looking for next, and the move values all follow from it. "That clue was a chop
+move" is said by marking the chop card as chop moved.
+
+Your word wins outright: an identity you name is kept even when the clues on the
+card appear to rule it out, because if the two disagree it is the bot's model of
+your table that is wrong. Corrections apply **from when you made them**, not
+backwards, so stepping back through the game still shows what the table knew at
+the time. Corrected cards are marked ✎ on the board and *yours* in the sheet,
+and the conventions screen counts them and can clear them.
+
+They live on the device, keyed by game, entirely outside the game record — so
+they cannot reach the export, and they survive undo and a corrected card.
 
 The bot reads the table from **common knowledge** — what every seat can work
 out — so a note means the same thing to the player holding the card as it does

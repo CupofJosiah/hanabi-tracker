@@ -19,12 +19,15 @@
 
   interface Props {
     onclose: () => void;
+    /** The open game, if any, so its corrections can be cleared from here. */
+    gameId?: string;
   }
 
-  let { onclose }: Props = $props();
+  let { onclose, gameId }: Props = $props();
 
   let settings = $derived(bot.settings);
   let missing = $derived(missingTechniques(settings));
+  let corrections = $derived(Object.keys(bot.overrides).length);
 
   function state(technique: Technique): "on" | "off" | "missing" {
     if (settings.level < technique.level) return "off";
@@ -109,6 +112,27 @@
       <span class="small muted">Off by default, matching scala-bot, which only writes on cards carrying information.</span>
     </span>
   </label>
+
+  {#if gameId}
+    <div class="stack corrections">
+      <span class="small muted">
+        {corrections === 0
+          ? "You have not corrected the bot in this game."
+          : `You have corrected the bot on ${corrections} card${corrections === 1 ? "" : "s"} in this game.`}
+      </span>
+      <button
+        class="btn btn-block"
+        disabled={corrections === 0}
+        onclick={() => bot.clearCorrections(gameId)}
+      >
+        Clear this game's corrections
+      </button>
+      <span class="small muted">
+        Tap any card and use <em>The bot has this wrong</em> to correct one. Corrections stay on
+        this device and never reach the export.
+      </span>
+    </div>
+  {/if}
 </Sheet>
 
 <style>
@@ -186,5 +210,11 @@
   .toggle input {
     margin-top: 3px;
     width: auto;
+  }
+
+  .corrections {
+    gap: 6px;
+    padding-top: 10px;
+    border-top: 1px solid var(--line);
   }
 </style>

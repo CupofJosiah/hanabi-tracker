@@ -251,6 +251,79 @@ describe("running over a real game", () => {
   });
 });
 
+describe("correcting the bot", () => {
+  /** bo is clued red on a fresh board; the bot will read that as r1. */
+  function cluedRed() {
+    return game(
+      [
+        ...ourHand,
+        ...bo(id(BLUE, 4), id(BLUE, 3), id(YELLOW, 4), id(GREEN, 4), id(RED, 1)),
+        ...Array.from({ length: 10 }, () => id(GREEN, 3)),
+      ],
+      [{ type: ActionType.ColorClue, target: 1, value: RED }],
+    );
+  }
+
+  it("takes your word for what a card is over its own reading", () => {
+    const record = cluedRed();
+    expect(botNote(analyse(record, SETTINGS), 9)).toBe("[f] [r1]");
+
+    // At this table the red clue meant the r4 behind it, not r1.
+    const corrected = analyse(record, SETTINGS, {
+      9: { identity: 3 * 1 + 0, fromAction: 1 }, // r4 -> suit 0, rank 4 -> ord 3
+    });
+    expect(botNote(corrected, 9)).toBe("[f] [r4]");
+    expect(corrected.thoughts.get(9)?.overridden).toBe(true);
+  });
+
+  it("takes your word for what a card is doing", () => {
+    const record = cluedRed();
+    const corrected = analyse(record, SETTINGS, {
+      9: { status: "chop moved", fromAction: 1 },
+    });
+    // No longer called to play; it is being held back instead.
+    expect(botNote(corrected, 9)).toBe("[cm] [r1]");
+  });
+
+  it("keeps an identity you name even when the clues seem to rule it out", () => {
+    const record = cluedRed();
+    // Blue is not red — the clue says so — but if you say it is b2, it is b2.
+    const corrected = analyse(record, SETTINGS, {
+      9: { identity: BLUE * 5 + 1, fromAction: 1 },
+    });
+    expect(botNote(corrected, 9)).toBe("[f] [b2]");
+  });
+
+  it("reasons onward from the correction rather than around it", () => {
+    // Clue red, bo plays the r1, and the turn comes back to us holding five
+    // cards nobody has said anything about.
+    const record = cluedRed();
+    record.actions.push({ type: ActionType.Play, target: 9, value: 0 });
+
+    const before = suggestMoves(record, analyse(record, SETTINGS));
+    expect(before.find((s) => s.move.kind === "play")).toBeUndefined();
+
+    // Tell the bot our own slot 1 is the r2, and it offers to play it.
+    const corrected = analyse(record, SETTINGS, {
+      4: { status: "called to play", identity: RED * 5 + 1, fromAction: 2 },
+    });
+    const play = suggestMoves(record, corrected).find((s) => s.move.kind === "play");
+    expect(play?.move).toEqual({ kind: "play", order: 4 });
+    expect(play?.value).toBeGreaterThan(0.9);
+    expect(play?.reasons.join(" ")).toContain("certain to play");
+  });
+
+  it("applies from when you said it, not backwards", () => {
+    const record = cluedRed();
+    // A correction recorded in the future has not happened yet.
+    const later = analyse(record, SETTINGS, {
+      9: { identity: BLUE * 5 + 1, fromAction: 5 },
+    });
+    expect(botNote(later, 9)).toBe("[f] [r1]");
+    expect(later.thoughts.get(9)?.overridden).toBe(false);
+  });
+});
+
 describe("convention settings", () => {
   it("is honest about the techniques it does not implement", () => {
     expect(missingTechniques({ ...DEFAULT_BOT_SETTINGS, level: 1 })).toEqual([]);

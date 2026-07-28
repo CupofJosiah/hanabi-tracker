@@ -120,6 +120,7 @@ empathy.ts     common knowledge: possible/inferred identity sets per card,
                card counting, Good Touch, chop and finesse position
 hgroup.ts      what each clue meant: focus, fix, save vs play, and the
                prompt/finesse search that makes an unplayable card make sense
+overrides.ts   your corrections, when the table plays off-book
 notes.ts       the note string, in scala-bot's format
 suggest.ts     candidate moves and what each is worth
 ```
@@ -135,6 +136,28 @@ Levels gate techniques with scala-bot's own numbers (`object Level`): 2 finesses
 3 fix, 4 chop moves, 5 layered. Levels 1–5 are implemented; 6–11 are listed in
 the settings screen as not-yet rather than silently ignored, and a clue the bot
 cannot justify comes back as `unclear`.
+
+### Corrections
+
+A correction attaches to a **card**, not to a clue. That is the whole design
+decision: what each card means already *is* the bot's state, so pinning a card
+propagates to the notes, to the prompt/finesse search run for the next clue, and
+to the move values, with no second mechanism to keep in sync. "That clue was a
+chop move" is expressed by marking the chop card as chop moved.
+
+`applyOverrides()` runs at the end of *every* settle rather than once at the
+end, so a pinned card is already pinned when the following clue is interpreted —
+the bot connects through your reading rather than around it. Your word wins
+outright over `possible`: an identity you name survives even when the clues
+appear to exclude it, since a disagreement there means the model of the table is
+wrong, not you.
+
+Each correction carries the `fromAction` count at which it was made and applies
+only from that point, so scrubbing back still shows what the table knew at the
+time. They are stored per game under their own key
+(`hanabi-tracker/v1/bot-overrides/<id>`), never in the `GameRecord`, which keeps
+them out of the export and lets them survive undo and an in-place card fix —
+orders are stable, so the key stays valid.
 
 ## Layout
 

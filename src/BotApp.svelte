@@ -25,8 +25,13 @@
 
   // Notes and suggestions are derived from deck + actions, so undo, a corrected
   // card and a scrubbed history all carry them along without any bookkeeping.
-  let analysis = $derived(game ? analyseGame(game, bot.settings) : undefined);
+  let analysis = $derived(game ? analyseGame(game, bot.settings, bot.overrides) : undefined);
   let botNotes = $derived(analysis ? notesFor(analysis) : undefined);
+
+  // Corrections belong to one game, so they are swapped in as games are opened.
+  $effect(() => {
+    if (game) bot.openGame(game.id);
+  });
 
   $effect(() => {
     if ((view.name === "game" || view.name === "review") && !game) app.go({ name: "home" });
@@ -53,7 +58,7 @@
           <SuggestionPanel record={game} {analysis} />
         {/snippet}
         {#snippet cardAside(order)}
-          <BotCardNote {analysis} {order} />
+          <BotCardNote record={game} {analysis} {order} />
         {/snippet}
       </GameView>
     {/key}
@@ -65,7 +70,7 @@
 </main>
 
 {#if settingsOpen}
-  <ConventionSheet onclose={() => (settingsOpen = false)} />
+  <ConventionSheet gameId={game?.id} onclose={() => (settingsOpen = false)} />
 {/if}
 
 <div class="toasts" aria-live="polite">
