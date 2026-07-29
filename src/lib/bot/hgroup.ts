@@ -50,6 +50,7 @@ import {
   resetThought,
   settled,
   trashOrds,
+  visibleOrd,
   worthSavingOrds,
   type Ord,
   type Thought,
@@ -118,6 +119,8 @@ export interface BotAnalysis {
   waiting: WaitingConnection[];
   /** Readings the bot abandoned mid-game, with what refuted them. */
   reinterpretations: Disproof[];
+  /** True until the first real chop discard — H-Group's early game. */
+  earlyGame: boolean;
   /** How many actions were replayed, so a hypothetical can be appended after them. */
   actionCount: number;
 }
@@ -191,9 +194,15 @@ export function cloneThoughts(thoughts: Map<number, Thought>): Map<number, Thoug
 /**
  * The focus of a clue: the one card it is really about.
  *
- * If the clue touched the chop, that is the focus. Otherwise it is the newest
- * card the clue just introduced, and failing that (a re-clue) the newest card
- * it touched at all.
+ * scala-bot's `determineFocus`. The chop wins outright. Otherwise the focus is
+ * the newest card the clue introduced that carried nothing at all — a card
+ * already called to play or blind-playing is skipped, because the clue cannot
+ * be about a card that was already spoken for, and skipping it is what lets a
+ * colour clue land on the card *behind* a finesse.
+ *
+ * Rank-1 clues are their own rule. 1s are played oldest-first out of the
+ * starting hand, so a "1" points at the oldest untouched 1 there — or, if the
+ * clue caught a 1 drawn since, at the newest of those.
  */
 export function determineFocus(
   state: GameState,
@@ -201,15 +210,30 @@ export function determineFocus(
   target: number,
   touched: readonly number[],
   previouslyClued: ReadonlySet<number>,
+  clue: Clue,
 ): { focus: number; onChop: boolean } {
-  const hand = handOrders(state, target);
   const chop = chopOf(state, thoughts, target);
   if (chop !== undefined && touched.includes(chop)) return { focus: chop, onChop: true };
+  if (touched.length === 0) return { focus: -1, onChop: false };
 
-  const newly = hand.filter((order) => touched.includes(order) && !previouslyClued.has(order));
-  const pool = newly.length > 0 ? newly : hand.filter((order) => touched.includes(order));
-  // hand[0] is slot 1, so the earliest entry is the newest card.
-  return { focus: pool[0] ?? touched[0] ?? -1, onChop: false };
+  if (clue.kind === "rank" && clue.value === 1) {
+    const rank = (order: number): number => {
+      if (thoughts.get(order)?.status === "chop moved") return 100 - order;
+      return (thoughts.get(order)?.drawnTurn ?? 0) === 0 ? order : -order;
+    };
+    let best = touched[0];
+    for (const order of touched) if (rank(order) < rank(best)) best = order;
+    return { focus: best, onChop: false };
+  }
+
+  const newestFirst = [...touched].sort((a, b) => b - a);
+  const fresh = newestFirst.find(
+    (order) => !previouslyClued.has(order) && thoughts.get(order)?.status === "none",
+  );
+  if (fresh !== undefined) return { focus: fresh, onChop: false };
+
+  const moved = newestFirst.find((order) => thoughts.get(order)?.status === "chop moved");
+  return { focus: moved ?? newestFirst[0], onChop: false };
 }
 
 /**
@@ -217,6 +241,12 @@ export function determineFocus(
  *
  * A save is not a save if everyone can see the copy is safe elsewhere, and a
  * play clue does not promise a card someone is already known to be holding.
+ *
+ * scala-bot's `invalidFocus` wants the table's reading *and* ours to agree
+ * before it rules an identity out. A card the table has read as b2 while we can
+ * see it is really b3 is not holding b2 for anybody, and treating it as if it
+ * were takes b2 off the table for the rest of the game — one wrong reading
+ * quietly poisoning every clue after it.
  */
 function claimedElsewhere(
   state: GameState,
@@ -229,7 +259,10 @@ function claimedElsewhere(
     const card = state.cards[order];
     if (!card || card.holder < 0 || !card.knowledge.clued) continue;
     const pool = possibilities(thought);
-    if (pool.size === 1 && pool.has(ord)) return true;
+    if (pool.size !== 1 || !pool.has(ord)) continue;
+    const seen = visibleOrd(state, order);
+    if (seen !== undefined && seen !== ord) continue;
+    return true;
   }
   return false;
 }
@@ -237,10 +270,14 @@ function claimedElsewhere(
 /**
  * The readings under which the clue means "hold onto this".
  *
- * Only ever on chop, and scala-bot's three rules apply: the card has to still
- * be wanted, no copy may already be accounted for elsewhere, and the clue has
- * to be one that saves that card — 5s and 2s by rank, anything critical by
- * either. A 1 is never saved; there are five of them.
+ * Only ever on chop, and scala-bot's rules apply (`specialClues.scala`): the
+ * card has to still be wanted, no copy may already be accounted for elsewhere,
+ * and the clue has to be one that saves that card.
+ *
+ * By rank, that is the 2s and anything critical. By colour it is anything
+ * critical **except a 5** — a 5 is saved with "5", never with its colour, so a
+ * colour clue touching the chop is a play clue and the table reads it as one.
+ * A 1 is never saved; there are five of them.
  */
 function savePossibilities(
   state: GameState,
@@ -265,8 +302,8 @@ function savePossibilities(
     const isCritical = critical.has(ord);
     const saves =
       clue.kind === "color"
-        ? isCritical
-        : clue.value === identity.rank && (identity.rank === 5 || identity.rank === 2 || isCritical);
+        ? isCritical && identity.rank !== 5
+        : clue.value === identity.rank && (identity.rank === 2 || isCritical);
 
     if (saves) out.push({ identity: ord, connections: [], save: true });
   }
@@ -309,29 +346,157 @@ function refreshAll(
 /**
  * Detects a clue whose job was to stop a card being played.
  *
- * A card that was promised playable and can no longer be any playable identity
- * has been fixed; the clue promises nothing new.
+ * scala-bot's `basics/fix.scala`. Two things make this narrow, and both matter:
+ * a fix is a clue given *on* the card it is fixing, so only cards this clue
+ * touched are candidates; and being fixed means the card is now **trash** —
+ * every identity it could still be is already on the stacks — not merely that
+ * it cannot go down this instant. Without the second, every delayed play clue
+ * reads as a fix, because a card promised two ranks up is not playable yet by
+ * design.
  *
- * `promisedBefore` is the set of orders that were under a play promise *before*
- * the clue landed, because the promise is the first thing the clue destroys —
- * reading it off the current state would find nothing to have fixed.
+ * `promisedBefore` and `cluedBefore` are snapshots from before the clue landed,
+ * because the promise is the first thing the clue destroys.
  */
 function detectFix(
+  thoughts: Map<number, Thought>,
+  touched: readonly number[],
+  promisedBefore: ReadonlySet<number>,
+  cluedBefore: ReadonlySet<number>,
+  trash: ReadonlySet<Ord>,
+): number[] {
+  const fixed: number[] = [];
+  for (const order of touched) {
+    if (!promisedBefore.has(order) && !cluedBefore.has(order)) continue;
+    const thought = thoughts.get(order);
+    if (!thought || thought.reset) continue;
+    const pool = possibilities(thought);
+    if (pool.size === 0) continue;
+    let allTrash = true;
+    for (const ord of pool) {
+      if (!trash.has(ord)) {
+        allTrash = false;
+        break;
+      }
+    }
+    if (allTrash) fixed.push(order);
+  }
+  return fixed;
+}
+
+/** Which slot a card is sitting in, 1 being the newest. */
+function slotOf(state: GameState, order: number): number {
+  return state.cards[order]?.slot ?? 0;
+}
+
+/**
+ * How many slots newer than the chop a card is sitting, counting only cards
+ * that are themselves still unspoken for. A card on chop is 0 away.
+ */
+function chopDistance(
+  state: GameState,
+  thoughts: Map<number, Thought>,
+  playerIndex: number,
+  order: number,
+): number {
+  const chop = chopOf(state, thoughts, playerIndex);
+  if (chop === undefined) return -1;
+  let count = 0;
+  for (const held of handOrders(state, playerIndex)) {
+    if (held >= order || held < chop) continue;
+    if (state.cards[held]?.knowledge.clued) continue;
+    if (thoughts.get(held)?.status !== "none") continue;
+    count++;
+  }
+  return count;
+}
+
+/**
+ * The 5's Chop Move, level 4.
+ *
+ * A 5 clued one slot off the chop is not about the 5 — it is telling the holder
+ * to keep the card next to it. scala-bot's `interpret5cm`, and the two rules
+ * that stop it firing everywhere are the ones easiest to leave out: the 5 has
+ * to be *exactly* one away from chop, and the early game is exempt, because a 5
+ * clued before anyone has discarded is an ordinary early-game 5 save.
+ *
+ * There is deliberately no "but the 5 is playable" exemption. A chop-moved 5
+ * that happens to be playable is still both — the holder plays it and keeps the
+ * card beside it.
+ */
+function detect5cm(
+  before: GameState,
+  after: GameState,
+  thoughts: Map<number, Thought>,
+  target: number,
+  touched: readonly number[],
+  clue: Clue,
+  previouslyClued: ReadonlySet<number>,
+  earlyGame: boolean,
+  trash: ReadonlySet<Ord>,
+): number | undefined {
+  if (clue.kind !== "rank" || clue.value !== 5) return undefined;
+  if (earlyGame) return undefined;
+
+  const chop = chopOf(before, thoughts, target);
+  if (chop === undefined || touched.includes(chop)) return undefined;
+
+  const fresh = touched.filter((order) => !previouslyClued.has(order) && order > chop);
+  if (fresh.length === 0) return undefined;
+  const oldest = Math.min(...fresh);
+  if (chopDistance(before, thoughts, target, oldest) !== 1) return undefined;
+
+  // It has to really be a 5. Our own hand we take on trust.
+  const seen = visibleOrd(after, oldest);
+  if (seen !== undefined && identityOfOrd(seen).rank !== 5) return undefined;
+
+  // Nothing to save: the chop is already known to be worthless.
+  const chopThought = thoughts.get(chop);
+  if (!chopThought) return undefined;
+  const pool = possibilities(chopThought);
+  if (pool.size > 0 && [...pool].every((ord) => trash.has(ord))) return undefined;
+
+  return chop;
+}
+
+/**
+ * The Trash Chop Move, level 4.
+ *
+ * Touching a card that can only be trash cannot be about that card, so it is
+ * about the cards behind it — everything older than the oldest card the clue
+ * just introduced gets moved off the chop, not merely the chop itself.
+ */
+function detectTcm(
   state: GameState,
   thoughts: Map<number, Thought>,
   target: number,
-  stacks: readonly number[],
-  promisedBefore: ReadonlySet<number>,
+  touched: readonly number[],
+  focus: number,
+  clue: Clue,
+  previouslyClued: ReadonlySet<number>,
+  trash: ReadonlySet<Ord>,
 ): number[] {
-  const playable = playableAgainst(stacks);
-  const fixed: number[] = [];
-  for (const order of handOrders(state, target)) {
-    if (!promisedBefore.has(order)) continue;
-    const thought = thoughts.get(order);
-    if (!thought) continue;
-    if (intersect(thought.possible, playable).size === 0) fixed.push(order);
-  }
-  return fixed;
+  if (previouslyClued.has(focus)) return [];
+  const focusThought = thoughts.get(focus);
+  if (!focusThought) return [];
+
+  // What the clue claims about the focus — for a rank clue, only that rank.
+  const promised = [...focusThought.possible].filter(
+    (ord) => clue.kind !== "rank" || identityOfOrd(ord).rank === clue.value,
+  );
+  if (promised.length === 0 || !promised.every((ord) => trash.has(ord))) return [];
+  // A card whose every inference is playable is a play clue, not trash.
+  if ([...focusThought.inferred].every((ord) => !trash.has(ord))) return [];
+
+  const fresh = touched.filter((order) => !previouslyClued.has(order));
+  if (fresh.length === 0) return [];
+  const oldestTrash = Math.min(...fresh);
+
+  return handOrders(state, target).filter(
+    (order) =>
+      order < oldestTrash &&
+      !state.cards[order]?.knowledge.clued &&
+      thoughts.get(order)?.status !== "chop moved",
+  );
 }
 
 /**
@@ -414,6 +579,8 @@ interface InterpretInput {
   reading: Ord | undefined;
   /** Orders under a play promise before the clue landed, for the fix check. */
   promisedBefore: ReadonlySet<number>;
+  /** True until somebody makes a real chop discard, which gates the 5 chop move. */
+  earlyGame: boolean;
 }
 
 interface InterpretResult {
@@ -425,7 +592,14 @@ function interpretClue(input: InterpretInput): InterpretResult {
   const { before, after, thoughts, action, clue, actionIndex, touched, settings } = input;
   const target = action.target;
   const giver = before.currentPlayerIndex;
-  const { focus, onChop } = determineFocus(before, thoughts, target, touched, input.previouslyClued);
+  const { focus, onChop } = determineFocus(
+    before,
+    thoughts,
+    target,
+    touched,
+    input.previouslyClued,
+    clue,
+  );
 
   const shell: ClueInterp = {
     actionIndex,
@@ -451,10 +625,11 @@ function interpretClue(input: InterpretInput): InterpretResult {
   if (!focusThought) return nothing("unclear", "focus already gone");
 
   const stacks = hypoStacks(after, thoughts);
+  const trash = trashOrds(after);
 
-  // A fix outranks everything: it is about a card that was already promised.
+  // A fix outranks everything: it is about a card that was already spoken for.
   if (levelAllows(settings, 3)) {
-    const fixed = detectFix(after, thoughts, target, after.playStacks, input.promisedBefore);
+    const fixed = detectFix(thoughts, touched, input.promisedBefore, input.previouslyClued, trash);
     if (fixed.length > 0) {
       for (const order of fixed) {
         const thought = thoughts.get(order);
@@ -466,25 +641,47 @@ function interpretClue(input: InterpretInput): InterpretResult {
     }
   }
 
-  const trash = trashOrds(after);
   const allTrash = [...focusThought.possible].every((ord) => trash.has(ord));
 
-  // 5 Chop Move / Trash Chop Move: the clue is not about its own focus.
+  // Chop moves: the clue is not about its own focus, it is about what is behind it.
   if (levelAllows(settings, 4)) {
-    const five = clue.kind === "rank" && clue.value === 5;
-    const focusCard = after.cards[focus];
-    const focusIsPlayable =
-      focusCard &&
-      isKnown(focusCard.identity) &&
-      after.playStacks[focusCard.identity.suitIndex] === focusCard.identity.rank - 1;
-
-    if ((five && !onChop && !focusIsPlayable) || (allTrash && !onChop)) {
-      const chop = chopOf(before, thoughts, target);
-      if (chop !== undefined && chop !== focus) {
-        const chopThought = thoughts.get(chop);
-        if (chopThought) chopThought.status = "chop moved";
-        return nothing("chop move", five ? "5 chop move" : "trash chop move");
+    const moved = detectTcm(
+      after,
+      thoughts,
+      target,
+      touched,
+      focus,
+      clue,
+      input.previouslyClued,
+      trash,
+    );
+    if (moved.length > 0) {
+      for (const order of moved) {
+        const thought = thoughts.get(order);
+        if (thought) thought.status = "chop moved";
       }
+      const names = moved.map((order) => `${after.players[target]} slot ${slotOf(after, order)}`);
+      return nothing("chop move", `trash chop move — hold ${names.join(", ")}`);
+    }
+
+    const fiveCm = detect5cm(
+      before,
+      after,
+      thoughts,
+      target,
+      touched,
+      clue,
+      input.previouslyClued,
+      input.earlyGame,
+      trash,
+    );
+    if (fiveCm !== undefined) {
+      const chopThought = thoughts.get(fiveCm);
+      if (chopThought) chopThought.status = "chop moved";
+      return nothing(
+        "chop move",
+        `5 chop move — hold ${after.players[target]} slot ${slotOf(after, fiveCm)}`,
+      );
     }
   }
 
@@ -496,16 +693,20 @@ function interpretClue(input: InterpretInput): InterpretResult {
 
   const ctx: ConnectContext = {
     state: after,
+    before,
     thoughts,
     giver,
     target,
     focus,
     settings,
     looksDirect,
-    stacks,
+    stacks: [...after.playStacks],
+    hypo: stacks,
   };
 
-  const playable = playableAgainst(stacks);
+  // "Playable" means playable *now*. Anything further up has to be justified by
+  // naming the cards in between, which is what makes the promise visible.
+  const playable = playableOrds(after);
   const playPoss: FocusPossibility[] = [];
   for (const ord of possibilities(focusThought)) {
     if (savePoss.some((fp) => fp.identity === ord)) continue;
@@ -534,7 +735,7 @@ function interpretClue(input: InterpretInput): InterpretResult {
           save: false,
         })
       : undefined;
-  const readings = simplest ? [simplest] : occamsRazor(all);
+  const readings = simplest ? [simplest] : occamsRazor(all, target, after.ourPlayerIndex);
 
   if (readings.length === 0) {
     if (allTrash) return nothing("useless", "touched only trash");
@@ -584,88 +785,110 @@ function interpretClue(input: InterpretInput): InterpretResult {
   }
 
   focusThought.status = "called to play";
-  // Only write connections when the reading is unambiguous. Two readings that
-  // disagree about who blind-plays promise nothing to anyone yet.
-  const agreed = readings.length === 1 ? readings[0] : undefined;
-  if (agreed) {
-    assignConnections(after, thoughts, agreed, settings);
-    if (agreed.connections.some((link) => link.kind !== "known")) {
-      waiting.push({
-        actionIndex,
-        focus,
-        identity: agreed.identity,
-        connections: agreed.connections,
-        index: 0,
-        giver,
-        target,
-        turn: before.turn,
-      });
-    }
+  // Every surviving reading is promised, not just an unambiguous one. A finesse
+  // is answered on the very next turn, so a reading that asks for a blind play
+  // has to be written down even while a simpler reading is still alive — and if
+  // the blind play never comes, that is exactly what refutes it later.
+  assignConnections(after, thoughts, readings, settings);
+  for (const reading of readings) {
+    if (!reading.connections.some((link) => link.kind !== "known")) continue;
+    waiting.push({
+      actionIndex,
+      focus,
+      identity: reading.identity,
+      connections: reading.connections,
+      index: 0,
+      giver,
+      target,
+      turn: before.turn,
+    });
   }
-  shell.connections = agreed?.connections ?? [];
 
-  const links = shell.connections;
-  const detail =
-    links.length > 0
-      ? `play clue, through ${links
-          .map((link) => `${link.kind} ${name(link.identity)}`)
-          .join(" → ")}`
-      : chosen.length > 1 && chosen.length <= 3
-        ? `play clue (${chosen.map(name).join(" or ")})`
-        : "play clue";
+  const seat = (link: Connection): string =>
+    `${after.players[link.playerIndex]} slot ${slotOf(after, link.order)}`;
+  const via = (fp: FocusPossibility): string =>
+    fp.connections.map((link) => `${link.kind} ${name(link.identity)} (${seat(link)})`).join(" → ");
+
+  const working = readings.filter((fp) => fp.connections.length > 0);
+  shell.connections = working[0]?.connections ?? [];
+
+  let detail: string;
+  if (readings.length === 1) {
+    detail = working.length > 0 ? `play clue, through ${via(readings[0])}` : "play clue";
+  } else {
+    const names = chosen.length <= 4 ? ` (${chosen.map(name).join(" or ")})` : "";
+    const asks = working.map((fp) => `${name(fp.identity)} would need ${via(fp)}`);
+    detail = `play clue${names}${asks.length > 0 ? ` — ${asks.join("; ")}` : ""}`;
+  }
 
   return { interp: { ...shell, kind: "play", chosen, detail }, waiting };
 }
 
-/** Writes the promise onto every card a reading depends on. */
+/**
+ * Writes the promise onto every card the surviving readings depend on.
+ *
+ * When more than one reading survives they are written in turn, and a card two
+ * readings both lean on keeps both identities rather than the second overwriting
+ * the first — scala-bot's `modified` set. Claiming to know which of them it is
+ * would be inventing information the table does not have.
+ */
 function assignConnections(
   state: GameState,
   thoughts: Map<number, Thought>,
-  reading: FocusPossibility,
+  readings: readonly FocusPossibility[],
   settings: BotSettings,
 ): void {
   const playable = playableOrds(state);
-  // A bluff can only be the first blind play of a reading, and only when the
-  // reading asks for one — scala-bot's `finalizeConns`. Deeper layers are
-  // reached through it, so they are not in doubt the same way.
-  const bluffable =
-    levelAllows(settings, 11) &&
-    reading.connections.filter((link) => link.kind === "finesse").length === 1 &&
-    reading.connections[0]?.kind === "finesse"
-      ? reading.connections[0]
-      : undefined;
+  const written = new Set<number>();
 
-  for (const link of reading.connections) {
-    if (link.order < 0) continue;
-    const thought = thoughts.get(link.order);
-    if (!thought || thought.reset) continue;
+  for (const reading of readings) {
+    // A bluff can only be the first blind play of a reading, and only when the
+    // reading asks for one — scala-bot's `finalizeConns`. Deeper layers are
+    // reached through it, so they are not in doubt the same way.
+    const bluffable =
+      levelAllows(settings, 11) &&
+      reading.connections.filter((link) => link.kind === "finesse").length === 1 &&
+      reading.connections[0]?.kind === "finesse"
+        ? reading.connections[0]
+        : undefined;
 
-    thought.status = link.kind === "finesse" ? "finessed" : "called to play";
-    thought.hidden = link.hidden;
+    for (const link of reading.connections) {
+      if (link.order < 0) continue;
+      const thought = thoughts.get(link.order);
+      if (!thought || thought.reset) continue;
 
-    // A blind play is promised a specific card, so its note says so even though
-    // nothing has touched it. A prompt is held to what the clues already allow.
-    let pinned =
-      link.kind === "finesse"
-        ? new Set([link.identity])
-        : intersect(thought.possible, new Set([link.identity]));
+      thought.status = link.kind === "finesse" ? "finessed" : "called to play";
+      thought.hidden = link.hidden;
 
-    // Bluffs, level 11. Told to play blind, you play — but the card need not be
-    // the one the clue was pointing at. It only has to be playable, which is
-    // exactly what a bluff exploits, so the note keeps every playable identity
-    // the card could be rather than claiming to know which. Nobody can see
-    // their own hand, so this holds however well *we* can see the card.
-    if (link === bluffable) {
-      const alsoPlayable = intersect(thought.possible, playable);
-      if (alsoPlayable.size > 0 && !subsetOf(alsoPlayable, pinned)) {
-        pinned = new Set([...pinned, ...alsoPlayable]);
-        thought.bluffed = true;
+      // A blind play is promised a specific card, so its note says so even
+      // though nothing has touched it. A prompt is held to what the clues allow.
+      let pinned =
+        link.kind === "finesse"
+          ? new Set([link.identity])
+          : intersect(thought.possible, new Set([link.identity]));
+
+      // Bluffs, level 11. Told to play blind, you play — but the card need not
+      // be the one the clue was pointing at. It only has to be playable, which
+      // is exactly what a bluff exploits, so the note keeps every playable
+      // identity the card could be rather than claiming to know which. Nobody
+      // can see their own hand, so this holds however well *we* can see it.
+      if (link === bluffable) {
+        const alsoPlayable = intersect(thought.possible, playable);
+        if (alsoPlayable.size > 0 && !subsetOf(alsoPlayable, pinned)) {
+          pinned = new Set([...pinned, ...alsoPlayable]);
+          thought.bluffed = true;
+        }
       }
-    }
 
-    if (pinned.size > 0) {
-      thought.inferred = pinned;
-      thought.narrowed = true;
+      // A card an earlier reading already spoke for keeps what that reading
+      // said as well: between them, all the table knows is that it is one of.
+      if (written.has(link.order)) pinned = new Set([...thought.inferred, ...pinned]);
+      written.add(link.order);
+
+      if (pinned.size > 0) {
+        thought.inferred = pinned;
+        thought.narrowed = true;
+      }
     }
   }
 }
@@ -743,6 +966,10 @@ function analyseOnce(
   const discards: DiscardInterp[] = [];
   const disproven: Disproof[] = [];
   let waiting: WaitingConnection[] = [];
+  // H-Group's early game: it ends the first time somebody genuinely discards
+  // off their chop, and until then a 5 on chop is an ordinary early-game save
+  // rather than a chop move.
+  let earlyGame = true;
 
   for (let actionIndex = 0; actionIndex < limit; actionIndex++) {
     const action = record.actions[actionIndex];
@@ -762,6 +989,15 @@ function analyseOnce(
       action.type === ActionType.Play || action.type === ActionType.Discard ? action.target : -1;
     const movedThought = movedOrder >= 0 ? thoughts.get(movedOrder) : undefined;
     const knownBefore = new Set<Ord>(movedThought ? possibilities(movedThought) : []);
+    const wasEarlyGame = earlyGame;
+    if (
+      earlyGame &&
+      action.type === ActionType.Discard &&
+      !before.cards[movedOrder]?.knowledge.clued &&
+      movedThought?.status === "none"
+    ) {
+      earlyGame = false;
+    }
 
     state = replay(base, done);
     syncThoughts(state, thoughts, state.turn);
@@ -799,6 +1035,7 @@ function analyseOnce(
         ruledOut: ruledOut[actionIndex] ?? [],
         reading: overrides.clues[actionIndex]?.identity,
         promisedBefore,
+        earlyGame: wasEarlyGame,
       });
       interps.push(result.interp);
       waiting = [...waiting, ...result.waiting];
@@ -827,6 +1064,7 @@ function analyseOnce(
       overrides,
       waiting,
       reinterpretations: [],
+      earlyGame,
       actionCount: limit,
     },
     disproven,
@@ -890,6 +1128,7 @@ export function hypotheticalClue(
     ruledOut: [],
     reading: undefined,
     promisedBefore,
+    earlyGame: analysis.earlyGame,
   });
   settle(after, thoughts, analysis.settings, analysis.overrides, actions.length);
 

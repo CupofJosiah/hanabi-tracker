@@ -83,6 +83,11 @@ loaded there, and it looks and behaves exactly as it did before.
 - **What each clue meant**, and what it is still waiting for. A clue that asks
   someone to blind-play is a claim about the next few turns; the panel says
   whose turn it is waiting on and for which card.
+- **It follows a clue through other people's cards.** Most clues are not about a
+  card you can play this second — they are about the one after the card someone
+  else is already holding. The bot names the chain: *"play clue, through known r2
+  (tyler slot 1) → known r3 (claire slot 4) → known r4 (josiah slot 4)"*, which
+  is the same reading scala-bot gives that game.
 - **It changes its mind.** If the blind play never comes, the reading was wrong,
   and the bot drops it and re-reads the whole game without it — so a finesse
   that nobody played into stops poisoning every note downstream of it.
@@ -136,6 +141,10 @@ The bot reads the table from **common knowledge** — what every seat can work
 out — so a note means the same thing to the player holding the card as it does
 to you. Where it cannot justify a clue under your conventions it says *unclear*
 instead of inventing a meaning.
+
+It also plays from **your seat**, so it never looks at your own hand, even when
+you have filled the cards in after the game. It reads the other hands, because
+whoever gave the clue could see them too.
 
 Move values are one move deep. scala-bot searches forward through the round
 before scoring, so for a real review still run the export through it:

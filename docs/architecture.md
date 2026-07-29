@@ -118,7 +118,7 @@ The reasoning is layered like scala-bot's:
 ```
 empathy.ts     common knowledge: possible/inferred identity sets per card,
                card counting, Good Touch, chop, finesse position, hypo stacks
-connect.ts     the prompt / finesse / layered-finesse search that makes an
+connect.ts     the known / playable / prompt / finesse search that makes an
                unplayable card make sense, and Occam's razor over the results
 hgroup.ts      what each clue meant: focus, fix, save vs play, chop moves,
                sarcastic discards, and the re-analysis loop
@@ -131,26 +131,52 @@ suggest.ts     candidate moves and what each is worth
 **The pool is common knowledge, not ours** — a note has to mean the same thing
 to the person holding the card, or it is a peek rather than a convention.
 
-**Occam's razor decides between readings.** Of the identities a clue could be
-promising, only those needing the fewest blind plays survive, which is why a red
-clue on a fresh card reads as `r1` and not "r1, or r2 off a finesse". Saves cost
-nothing, so a 2 on a chop beats any reading that needs someone to work something
-out — which is exactly why it is a save.
+**What the bot may look at.** The recorder cannot see their own hand; a finished
+record fills those cards in afterwards, so reading them back would let the bot
+find connections the table could never have found and reject ones it would have
+made. Every "what is this card really" question goes through
+`visibleOrd(state, order)`, which returns nothing for our own hand. Other seats
+*are* visible, deliberately: the clue-giver could see them, and scala-bot reads
+clues the same way.
 
-**Hypothetical stacks are what make connections findable.** `hypoStacks()` is
-the board once everything already promised has played, and every reachability
-question is asked against it rather than the bare stacks. Without it the bot can
-only ever see one rank past what is down, and a clue on r3 behind a promised r2
-reads as nonsense.
+**Chains start at the real stacks.** `connect()` walks one rank at a time up from
+`playStacks`, and each rank has to be supplied by a named card. That is the whole
+of the prompt/finesse/delayed-play search, and the reason it is *not* run against
+`hypoStacks()` is that starting above everything already promised makes a delayed
+play clue look like a direct one: the connections are still real, but nobody is
+named, so nobody is told to play. `hypoStacks()` is still used, for the narrower
+question of whether a clued card counts as "going to play" at all.
+
+**A connection need not be playable yet.** A known r3 is what makes a clue on r4
+readable while red is still on 1, because the chain walks in rank order and
+whatever unblocks it is already earlier in the same chain. Requiring each link to
+be playable *now* is what limits a bot to seeing a single rank ahead — on the
+recorded four-player game it is the difference between finding no connections at
+all and reading `r2 → r3 → r4 → r5` across three hands.
+
+**Occam's razor decides between readings**, on scala-bot's scale
+(`fpSimplicity`). A reading costs nothing when the first card anybody has to work
+out belongs to a seat that is neither the receiver nor us — someone else will
+demonstrate it first. Otherwise it counts that seat's blind plays and prompts,
+weighting our own hand far above the receiver's, because we cannot see ours to
+check. Saves and chains of already-placed cards both come out at zero, which is
+why a 2 on a chop is a save and a delayed play clue ties with a direct one.
 
 ### Reinterpretation
 
 A clue that asks for a blind play is not a fact, it is a claim about the next
-few turns, so `interpretClue` registers a `WaitingConnection` for it. Every
-subsequent action is judged against the outstanding ones (`updateWaiting`): the
-card plays and the promise advances; somebody else plays that identity and it
-advances too; the card becomes impossible, or the player whose turn it was
-clued or discarded instead, and the promise is **refuted**.
+few turns, so `interpretClue` registers a `WaitingConnection` for it — one per
+surviving reading, not only for an unambiguous one, because a finesse is answered
+on the very next turn and has to be written down while a simpler reading is still
+alive. Every subsequent action is judged against the outstanding ones
+(`updateWaiting`): the card plays and the promise advances; somebody else plays
+that identity and it advances too; the card becomes impossible, or the player
+whose turn it was clued or discarded instead, and the promise is **refuted**.
+
+Only prompts and blind plays can be refuted by silence. A `known` or `playable`
+connection is a card the table already expects to play in due course, so its
+holder passing the turn says nothing about the reading — treating it as a broken
+promise makes the bot abandon perfectly good delayed play clues.
 
 Refutation does not patch the notes. The identity is struck out for that clue
 and **the whole game is analysed again** from the top — scala-bot's rewind. That

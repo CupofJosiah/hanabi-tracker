@@ -133,6 +133,24 @@ export function possibilities(thought: Thought): Set<Ord> {
   return thought.inferred.size > 0 ? thought.inferred : thought.possible;
 }
 
+/**
+ * A card's identity as the bot is allowed to see it, as an ordinal.
+ *
+ * The bot plays as the recorder, and the recorder cannot see their own hand —
+ * that is the game. A finished game record fills those cards in after the fact,
+ * so reading them straight off the deck would let the bot find connections the
+ * recorder could never have found, and reject ones they would have made. Every
+ * question about what a card *really* is has to go through here.
+ *
+ * Played and discarded cards are face up, so they stay visible.
+ */
+export function visibleOrd(state: GameState, order: number): Ord | undefined {
+  const card = state.cards[order];
+  if (!card || !isKnown(card.identity)) return undefined;
+  if (card.holder === state.ourPlayerIndex) return undefined;
+  return ordOf(card.identity);
+}
+
 /** The identity when it is pinned down to exactly one, else undefined. */
 export function settled(thought: Thought): Identity | undefined {
   if (thought.possible.size === 1) return identityOfOrd([...thought.possible][0]);
@@ -351,11 +369,20 @@ export function applyGoodTouch(
 
   // A second copy of an identity that some other clued card is already known to
   // be cannot also be that identity.
+  //
+  // Only when the first card really is it, though. A card the table has *read*
+  // as b2 while we can see it is a b3 is not holding b2, and striking b2 off
+  // every other card would let one wrong reading spread through the rest of the
+  // game. Cards we cannot see — our own — are taken at the table's word.
   const claimed = new Set<Ord>();
   for (const thought of thoughts.values()) {
     const card = state.cards[thought.order];
     if (!card || card.holder < 0 || !card.knowledge.clued) continue;
-    if (thought.inferred.size === 1) claimed.add([...thought.inferred][0]);
+    if (thought.inferred.size !== 1) continue;
+    const ord = [...thought.inferred][0];
+    const seen = visibleOrd(state, thought.order);
+    if (seen !== undefined && seen !== ord) continue;
+    claimed.add(ord);
   }
   for (const thought of thoughts.values()) {
     const card = state.cards[thought.order];

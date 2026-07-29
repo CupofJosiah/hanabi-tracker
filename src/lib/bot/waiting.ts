@@ -143,8 +143,12 @@ export function updateWaiting(
       continue;
     }
 
-    // A known connection is not a demand — they may be waiting on someone else.
-    if (link.kind === "known") {
+    // Only a prompt or a blind play has to be answered on the spot; that
+    // urgency is what makes silence a refutation. A card the table already
+    // expects to play in due course — known, or known-playable without knowing
+    // which — is under no such obligation, and its holder passing the turn says
+    // nothing about the reading.
+    if (link.kind === "known" || link.kind === "playable") {
       kept.push(wc);
       continue;
     }

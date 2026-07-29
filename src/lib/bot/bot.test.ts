@@ -10,6 +10,7 @@ import { fromHanabLive } from "../hanabi/hanabLive";
 import { ActionType, type GameAction, type GameRecord, type Identity } from "../hanabi/types";
 import { DEFAULT_BOT_SETTINGS, missingTechniques, type BotSettings } from "./conventions";
 import { analyse } from "./hgroup";
+import { ordOf } from "./empathy";
 import type { BotOverride, BotOverrides } from "./overrides";
 import { botNote } from "./notes";
 import { suggestMoves } from "./suggest";
@@ -120,6 +121,107 @@ describe("reading a clue", () => {
     expect(botNote(analysis, 9)).toBe("[f] [g2]");
     // And the card asked to blind-play says so, with nothing having touched it.
     expect(botNote(analysis, 8)).toBe("[f] [g1]");
+  });
+
+  it("connects through a card the table has already placed", () => {
+    // The delayed play clue, and the thing the bot used to be unable to see at
+    // all. Nothing red is playable when the "2" is given — r1 has not gone down
+    // — but everyone knows bo is holding it, so r2 is a perfectly readable clue.
+    const record = game(
+      [
+        ...ourHand,
+        ...bo(id(BLUE, 4), id(BLUE, 3), id(YELLOW, 4), id(GREEN, 4), id(RED, 1)),
+        id(RED, 2),
+        ...Array.from({ length: 10 }, () => id(GREEN, 3)),
+      ],
+      [
+        // Red on an empty board means r1: order 9 is now known to the table.
+        { type: ActionType.ColorClue, target: 1, value: RED },
+        // bo throws his chop away and draws the r2 (order 10).
+        { type: ActionType.Discard, target: 5, value: 0 },
+        { type: ActionType.RankClue, target: 1, value: 2 },
+      ],
+    );
+
+    const analysis = analyse(record, SETTINGS);
+    const interp = analysis.interps.at(-1);
+    expect(interp?.kind).toBe("play");
+    expect(interp?.focus).toBe(10);
+
+    // One connection, and it costs nobody a blind play: bo already knows he
+    // holds the r1, so the clue is simply "the one after it".
+    expect(interp?.connections).toHaveLength(1);
+    expect(interp?.connections[0].kind).toBe("known");
+    expect(interp?.connections[0].order).toBe(9);
+    expect(interp?.detail).toContain("known r1");
+
+    // Red is the only suit anyone can reach, so the 2 is pinned to r2.
+    expect(botNote(analysis, 10)).toBe("[f] [r2]");
+  });
+
+  it("does not read a colour clue on the chop as saving a 5", () => {
+    // 5s are saved with "5", never with their colour. bo's chop is the b5, and
+    // blue touches only it — so this is a play clue for b1, not a save. Reading
+    // it as a save is how a bot tells you to sit on a playable card.
+    const record = game(
+      [
+        ...ourHand,
+        ...bo(id(BLUE, 5), id(GREEN, 4), id(YELLOW, 4), id(GREEN, 3), id(RED, 4)),
+        ...Array.from({ length: 10 }, () => id(GREEN, 2)),
+      ],
+      [{ type: ActionType.ColorClue, target: 1, value: BLUE }],
+    );
+
+    const analysis = analyse(record, SETTINGS);
+    const interp = analysis.interps.at(-1);
+    expect(interp?.focus).toBe(5); // it is the chop
+    expect(interp?.kind).toBe("play");
+    expect(analysis.thoughts.get(5)?.status).toBe("called to play");
+    expect(botNote(analysis, 5)).toBe("[f] [b1]");
+  });
+
+  it("reads a 5 clued one slot off the chop as a chop move", () => {
+    // The 5's Chop Move. Two rules keep it from firing everywhere, and both are
+    // exercised here: the early game has to be over, and the 5 has to be
+    // *exactly* one card away from the chop.
+    const record = game(
+      [
+        ...ourHand,
+        ...bo(id(GREEN, 4), id(YELLOW, 4), id(BLUE, 4), id(RED, 5), id(YELLOW, 3)),
+        id(GREEN, 2),
+        ...Array.from({ length: 10 }, () => id(GREEN, 3)),
+      ],
+      [
+        { type: ActionType.ColorClue, target: 1, value: BLUE }, // touches b4 (order 7)
+        { type: ActionType.Discard, target: 5, value: 0 }, // ends the early game
+        { type: ActionType.RankClue, target: 1, value: 5 }, // touches r5 (order 8)
+      ],
+    );
+
+    const analysis = analyse(record, SETTINGS);
+    const interp = analysis.interps.at(-1);
+    expect(interp?.kind).toBe("chop move");
+    expect(interp?.detail).toContain("5 chop move");
+    // The card kept is the chop, not the 5 that was clued.
+    expect(analysis.thoughts.get(6)?.status).toBe("chop moved");
+    expect(botNote(analysis, 6)).toContain("[cm]");
+  });
+
+  it("focuses the oldest 1 when a rank-1 clue catches several", () => {
+    // 1s are played oldest-first out of the starting hand, so a "1" touching
+    // two of them is pointing at the older one. Taking the newest instead — the
+    // ordinary focus rule — puts the note on the wrong card.
+    const record = game(
+      [
+        ...ourHand,
+        ...bo(id(GREEN, 4), id(RED, 1), id(YELLOW, 4), id(BLUE, 1), id(GREEN, 3)),
+        ...Array.from({ length: 10 }, () => id(GREEN, 2)),
+      ],
+      [{ type: ActionType.RankClue, target: 1, value: 1 }],
+    );
+
+    const analysis = analyse(record, SETTINGS);
+    expect(analysis.interps.at(-1)?.focus).toBe(6);
   });
 
   it("drops played identities from a card's note under Good Touch", () => {
@@ -382,6 +484,11 @@ describe("suggesting a move", () => {
 describe("running over a real game", () => {
   const record = fromHanabLive(fixture, { ourPlayerIndex: 0 });
 
+  /** Who was to move when a given action was taken. */
+  function giverOf(game: GameRecord, actionIndex: number): number {
+    return analyse(game, SETTINGS, undefined, actionIndex).state.currentPlayerIndex;
+  }
+
   it("reads all 4 players' hands without falling over", () => {
     const analysis = analyse(record, SETTINGS);
     expect(analysis.state.score).toBe(20);
@@ -401,13 +508,50 @@ describe("running over a real game", () => {
 
     // A real table playing H-Group: 22 of the 24 clues get a reading, and the
     // mix is what you would expect — mostly play clues, a good number of saves
-    // on chop, and one clue whose job was to stop a misplay.
+    // on chop, and one 5 clued a slot off the chop to move it.
     //
-    // The saves are the interesting number. Every 2 and 5 clued on a chop is
-    // one, and reading those as play clues (which is what happens without the
-    // save rules) is how a bot talks you into misplaying a card you were being
-    // asked to hold.
-    expect(kinds).toEqual({ play: 13, save: 8, fix: 1, unclear: 2 });
+    // The saves are the interesting number. Every 2 and critical card clued on
+    // a chop is one, and reading those as play clues (which is what happens
+    // without the save rules) is how a bot talks you into misplaying a card you
+    // were being asked to hold. The two left unread are both a critical card
+    // clued off chop, which H-Group has no reading for — and scala-bot flags
+    // mistakes around the same turns, so the table was off-book there.
+    expect(kinds).toEqual({ play: 15, save: 6, "chop move": 1, unclear: 2 });
+  });
+
+  /**
+   * The whole point of connections, measured on a real game.
+   *
+   * Every one of these was missed before: reachability was judged against the
+   * bare play stacks, so nothing more than one rank past the board could ever
+   * be justified and every deeper clue read as a direct play or as nonsense.
+   * scala-bot finds the same chains on the same game.
+   */
+  it("reads clues that only make sense through other people's cards", () => {
+    const analysis = analyse(record, SETTINGS);
+    const through = analysis.interps.filter((interp) => interp.connections.length > 0);
+    expect(through.length).toBeGreaterThanOrEqual(6);
+
+    // The deepest of them: a red clue that only means r5 once three separate
+    // players have each put a red card down first.
+    const chain = analysis.interps.find((interp) => interp.connections.length >= 3);
+    expect(chain).toBeDefined();
+    expect(chain?.kind).toBe("play");
+    expect(chain?.connections.map((link) => link.identity)).toEqual([
+      ordOf(id(RED, 2)),
+      ordOf(id(RED, 3)),
+      ordOf(id(RED, 4)),
+    ]);
+    // Three different hands, every one of them a card the whole table has
+    // already placed — so the clue costs nobody a blind play.
+    const seats = new Set(chain?.connections.map((link) => link.playerIndex));
+    expect(seats.size).toBe(3);
+    expect(chain?.connections.every((link) => link.kind === "known")).toBe(true);
+
+    // The giver is never one of them: they can see their own clue, so asking
+    // them to work something out from it says nothing.
+    const giver = giverOf(record, chain!.actionIndex);
+    expect(seats.has(giver)).toBe(false);
   });
 
   it("never writes into the game's own notes", () => {
