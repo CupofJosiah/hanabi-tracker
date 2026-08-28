@@ -27,6 +27,17 @@
  *   fit, the clue cannot mean this. Reaching past it for a finesse would invent
  *   a blind play nobody has a reason to make.
  *
+ * - **A bluff is the same shape, from one seat only.** When the card on
+ *   finesse position is visibly playable but is *not* the card the chain
+ *   needs, the table has two readings of the same blind play: a layered
+ *   finesse, or a bluff. H-Group settles it by seat — only the player directly
+ *   before the blind-player may bluff, and from that seat a bluff beats a
+ *   layered finesse. Two further rules keep it honest: the blind play has to
+ *   happen on the very next turn (the Lie Principle), so nothing that needs
+ *   somebody to act may come before it; and the focus has to end up
+ *   one-away-from-playable, so the bluff can only stand in for the last
+ *   missing rank.
+ *
  * The one piece of scala-bot deliberately left out is `mustPassback`, its
  * reordering of the seat search for variants where the focus could be a
  * different suit at the same height. It only bites in rainbow-like variants,
@@ -106,6 +117,14 @@ export interface ConnectContext {
    * two ranks up is on its way if the cards under it are already spoken for.
    */
   hypo: number[];
+}
+
+/**
+ * The only seat allowed to bluff: the one that acts immediately after the
+ * giver, and so is the one whose blind play resolves the lie straight away.
+ */
+export function bluffSeat(numPlayers: number, giver: number): number {
+  return (giver + 1) % numPlayers;
 }
 
 /** Seats in scala-bot's search order: backwards from the giver, giver excluded. */
@@ -485,6 +504,7 @@ function findSeatLinks(
   needed: Ord,
   taken: ReadonlySet<number>,
   ignore: ReadonlySet<number>,
+  bluffable: boolean,
 ): Connection[] | undefined {
   if (skipSeat(ctx, seat, needed)) return undefined;
 
@@ -509,6 +529,15 @@ function findSeatLinks(
             })();
 
     if (!link) return undefined;
+
+    // A visibly playable card that is not the one the chain needs. From the
+    // bluff seat that *is* the reading: the blind play happens next turn and
+    // the focus turns out to be one-away-from-playable, so the chain stops
+    // here rather than digging further into the hand for a layered finesse.
+    if (link.hidden && link.kind === "finesse" && bluffable && depth === 0) {
+      return [{ ...link, hidden: false, bluff: true }];
+    }
+
     links.push(link);
     used.add(link.order);
     if (!link.hidden) return links;
@@ -526,14 +555,16 @@ function findLink(
   needed: Ord,
   taken: ReadonlySet<number>,
   ignore: ReadonlySet<number>,
+  bluffable: boolean,
 ): Connection[] | undefined {
   if (!stillExists(ctx.state, needed)) return undefined;
 
   const known = findKnown(ctx, needed, taken, ignore);
   if (known) return [known];
 
+  const seat0 = bluffSeat(ctx.state.players.length, ctx.giver);
   for (const seat of connectionSeats(ctx.state.players.length, ctx.giver)) {
-    const links = findSeatLinks(ctx, seat, needed, taken, ignore);
+    const links = findSeatLinks(ctx, seat, needed, taken, ignore, bluffable && seat === seat0);
     if (links) return links;
   }
   return undefined;
@@ -566,7 +597,15 @@ function connectFrom(
   for (let rank = top + 1; rank < identity.rank; rank++) {
     const needed = ordOf({ suitIndex: identity.suitIndex, rank });
     const walked: ConnectContext = { ...ctx, stacks, hypo, looksDirect };
-    const links = findLink(walked, needed, taken, ignore);
+    // The Lie Principle: a bluff has to be answered on the very next turn and
+    // leave the focus one-away-from-playable. Both together mean it can only be
+    // the whole chain — one blind play, standing in for the single rank between
+    // the stack and the card that was clued.
+    const bluffable =
+      levelAllows(ctx.settings, 11) &&
+      connections.length === 0 &&
+      rank === identity.rank - 1;
+    const links = findLink(walked, needed, taken, ignore, bluffable);
 
     if (!links) {
       // The chain died after leaning on a card the table has pinned down. That
@@ -649,5 +688,12 @@ export function occamsRazor(
   if (possibilities.length === 0) return [];
   const costs = possibilities.map((fp) => simplicity(fp, target, ourPlayerIndex));
   const cheapest = Math.min(...costs);
-  return possibilities.filter((_, i) => costs[i] === cheapest);
+  const survivors = possibilities.filter((_, i) => costs[i] === cheapest);
+
+  // "Finesses over Bluffs", the last step of H-Group's own ordering. Both ask
+  // for the same single blind play, so the razor above cannot separate them;
+  // the one that tells the truth wins.
+  const bluffs = survivors.map((fp) => fp.connections.filter((link) => link.bluff).length);
+  const fewest = Math.min(...bluffs);
+  return survivors.filter((_, i) => bluffs[i] === fewest);
 }

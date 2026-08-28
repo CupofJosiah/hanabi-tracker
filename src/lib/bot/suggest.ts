@@ -12,7 +12,7 @@
  * two turns away is undervalued. The reasons list is the honest part: read it
  * rather than trusting the decimal.
  */
-import { canDiscard, canGiveClue, type GameState } from "../hanabi/engine";
+import { canDiscard, canGiveClue, pace, type GameState } from "../hanabi/engine";
 import { MAX_CLUE_TOKENS, isKnown, type Clue, type GameRecord } from "../hanabi/types";
 import { cardTouched, clueName, identityName, RANKS } from "../hanabi/variants";
 import {
@@ -161,6 +161,32 @@ function evaluateDiscard(analysis: BotAnalysis, order: number): Suggestion | und
     }
   }
 
+  // Once pace runs out a discard is not free at all: there is no longer a turn
+  // left to draw and play the card it costs, so the maximum score drops.
+  const room = pace(state);
+  if (room <= 0) {
+    value -= 1;
+    reasons.push("pace is gone — a discard now costs a point (-1.00)");
+  } else if (room < state.players.length) {
+    const cost = 0.35;
+    value -= cost;
+    reasons.push(`end-game, pace ${room} (${fmt(-cost)})`);
+  }
+
+  // Double Discard Avoidance: the player before us threw one of these away, so
+  // this could be the last copy of it.
+  const last = analysis.lastDiscard;
+  if (last !== undefined && critical.has(last) && pool.has(last)) {
+    const cost = 0.7;
+    value -= cost;
+    reasons.push(
+      `double discard position — the last card thrown was a ${identityName(
+        state.variant,
+        identityOfOrd(last),
+      )} (${fmt(-cost)})`,
+    );
+  }
+
   // The chop belongs to whoever holds the card, not to us.
   const holder = state.cards[order]?.holder ?? state.ourPlayerIndex;
   const isChop = chopOf(state, thoughts, holder) === order;
@@ -289,9 +315,25 @@ function evaluateClue(
     );
   }
 
-  if (interp.kind === "chop move") {
-    value += 0.6;
-    reasons.push(`${interp.detail} (${fmt(0.6)})`);
+  // Chop moves, however they arrived — a trash or 5 chop move, or the one a
+  // tempo clue carries with it.
+  let moved = 0;
+  for (const [order, thought] of afterThoughts) {
+    if (thought.status !== "chop moved") continue;
+    if (analysis.thoughts.get(order)?.status === "chop moved") continue;
+    moved++;
+  }
+  if (moved > 0) {
+    const worth = moved * 0.6;
+    value += worth;
+    reasons.push(`${interp.detail} (${fmt(worth)})`);
+  }
+
+  if (interp.kind === "tempo" && moved === 0) {
+    // A tempo clue that did not carry a chop move has to earn its keep on the
+    // play alone, and it did not touch anything new to make up for it.
+    value -= 0.15;
+    reasons.push("gets no new cards (-0.15)");
   }
 
   if (interp.kind === "fix") {
@@ -312,7 +354,7 @@ function evaluateClue(
   }
 
   // A clue with more than one reading leaves the table guessing which.
-  if (interp.chosen.length > 1 && interp.kind === "play") {
+  if (interp.chosen.length > 1 && (interp.kind === "play" || interp.kind === "tempo")) {
     const cost = Math.min(interp.chosen.length - 1, 3) * 0.15;
     value -= cost;
     reasons.push(`${interp.chosen.length} readings — ambiguous (${fmt(-cost)})`);

@@ -81,9 +81,11 @@ loaded there, and it looks and behaves exactly as it did before.
   on one scale — a certain play is about 1.00, a clue is worth the plays it sets
   up, a discard is worth the clue token minus what it throws away. Tap a move to
   see the arithmetic that produced the number.
-- **What each clue meant**, and what it is still waiting for. A clue that asks
+- **What each move meant**, and what it is still waiting for. A clue that asks
   someone to blind-play is a claim about the next few turns; the panel says
-  whose turn it is waiting on and for which card.
+  whose turn it is waiting on and for which card. Discards get read too: a card
+  thrown away can hand its twin to somebody, and a chop thrown away at zero
+  clues is an alarm that moves the next player's chop.
 - **It follows a clue through other people's cards.** Most clues are not about a
   card you can play this second — they are about the one after the card someone
   else is already holding. The bot names the chain: *"play clue, through known r2
@@ -93,9 +95,17 @@ loaded there, and it looks and behaves exactly as it did before.
   and the bot drops it and re-reads the whole game without it — so a finesse
   that nobody played into stops poisoning every note downstream of it.
 - **Conventions you set.** H-Group levels 1&ndash;11, gated exactly as scala-bot
-  gates them, plus a Good Touch switch. Levels 1&ndash;5 are fully reasoned
-  about; the settings screen names the techniques above that it does not know
-  yet rather than pretending.
+  gates them, plus a Good Touch switch. Levels 1&ndash;7 are fully reasoned
+  about, and most of 8&ndash;11 is: stalling situations and the saves they
+  license, gentleman's and baton discards, positional discards once the deck is
+  dead, and bluffs proper — read from the bluff seat only, and only where the
+  lie resolves on the very next turn. The settings screen names the three
+  techniques it still does not know rather than pretending.
+- **It counts cards the way each player can.** Every copy of every identity is
+  tracked along with the one seat who cannot see it, so the last blue 3 sitting
+  in someone's hand tells the rest of the table what their own cards are not,
+  and tells its holder nothing. That is what stops a note meaning one thing to
+  you and another to the person holding the card.
 - **Corrections, when your table plays off-book.** Tell it what a card is doing,
   or pick a different reading for a whole clue. See below.
 

@@ -64,10 +64,11 @@
 
   {#if missing.length > 0}
     <p class="small warn">
-      Levels 1&ndash;{FULLY_IMPLEMENTED_THROUGH} are fully reasoned about. At level {settings.level}
-      the bot will not spot: {missing.map((t) => t.name.toLowerCase()).join(", ")}. Its notes and
-      suggestions stay sound for everything below that, but it will read a clue as
-      <em>unclear</em> rather than invent a meaning it does not know.
+      Levels 1&ndash;{FULLY_IMPLEMENTED_THROUGH} are complete, and most of what is above them is
+      too. At level {settings.level} the bot will not spot: {missing
+        .map((t) => t.name.toLowerCase())
+        .join(", ")}. Everything else at this level it reads, and where it cannot justify a clue it
+      says <em>unclear</em> rather than inventing a meaning.
     </p>
   {/if}
 

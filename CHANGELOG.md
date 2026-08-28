@@ -22,6 +22,44 @@
 - The clue sheet only offers the clues a variant has, labels them the way the
   variant does (Odd/Even, Moo/Oink/Quack), and says why a kind is barred under
   Alternating Clues.
+- The bot reads H-Group levels 6 to 11, not just 1 to 5.
+  - **Bluffs, properly.** A blind play that cannot be the promised card is read
+    as a bluff when — and only when — the giver sits directly before the
+    blind-player, the lie resolves on the very next turn, and the clued card
+    comes out one-away-from-playable. From bluff seat a bluff beats a layered
+    finesse, as H-Group says; everywhere else it is still a layered finesse, and
+    a reading that tells the truth always beats one that does not.
+  - **Tempo clues.** A clue that touched nothing new is read as getting an
+    already-clued card played, and when it was not worth a whole clue on its own
+    it carries a chop move. Focus shifting comes with it: the focus slides past a
+    card the table already knew would play.
+  - **Stalling situations.** Early game, double discard, locked hand and 8
+    clues are ranked the way H-Group ranks them, and each licenses a different
+    clue that is allowed to say nothing: a 5 stall, a tempo stall, a fill-in, a
+    locked-hand or 8-clue save, a hard burn. It is a fallback, so a clue that
+    gets a card played is never demoted to a stall — but a 5 clued one off the
+    chop in a stalling position is a stall rather than a chop move now.
+  - **Discards that speak.** Gentleman's and baton discards join the sarcastic
+    one; a chop thrown at zero clues, or known rubbish thrown with a play in
+    hand, is read as an alarm that moves the next player's chop; and throwing
+    the playable card itself is a generation discard that moves nobody's.
+  - **Order chop moves.** Playing unknown 1s out of order moves a chop, one seat
+    along per 1 skipped.
+  - **Ambiguous finesses.** A player who passes on a blind play no longer
+    refutes the reading when somebody else is sitting on the same card.
+  - **No chop moves in the end-game**, once pace has run out.
+  - **Positional discards and misplays.** Once the deck is dead and a player's
+    whole hand is rubbish to them, the slot they throw names a slot for somebody
+    else to blind-play — and where a discard would read as an ordinary one, a
+    misplay carries the same message.
+- **Empathy, properly.** Card counting is now done per point of view rather than
+  once for the table. Each copy is recorded along with the one seat that cannot
+  see it, so the last b3 in Bob's hand tells everybody except Bob what their own
+  cards are not — the deduction Bob has no way of making. Naked groups came with
+  it (five clued 5s and five 5s left now name each other), and so did
+  `perspectiveOf`, which answers what a single player can work out about their
+  own hand. On the recorded game it corrects two clues the bot used to read
+  through cards the table could see were something else.
 
 ### Changed
 
@@ -32,6 +70,21 @@
   the suits, Ambiguous and Dual-Color included, it still reads.
 - Analysis by scala-bot is not guaranteed for the newly added variants; the
   export is still valid hanab.live JSON and replays there.
+- Plays and discards that meant something now appear in the bot's log, which
+  they never did before — a sarcastic discard was being read and then thrown
+  away.
+- Move values account for pace and for a double-discard position, so a discard
+  stops looking free once there is no room left for it.
+
+### Notes
+
+- Three techniques the levels ask for are still not reasoned about, and the
+  settings screen names them: distribution clues, anxiety plays, and
+  sarcastic/certain finesses. Levels 1 to 7 are complete.
+- Sharper empathy costs the bot three readings on the recorded four-player game
+  and corrects four. Two of the three were clues the giver could see made no
+  sense; the third is a prompt that lands on a bad-touched card, which is what a
+  table would run into as well.
 
 ## 3.0.0
 

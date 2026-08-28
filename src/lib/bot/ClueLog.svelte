@@ -66,15 +66,37 @@
     save: "save",
     fix: "fix",
     "chop move": "chop move",
+    tempo: "tempo clue",
     stall: "stall",
     useless: "said nothing",
     unclear: "unclear",
   };
+
+  /**
+   * Plays and discards that said something.
+   *
+   * H-Group puts as much on a discard as on a clue — the card handed over, the
+   * alarm raised, the chop moved by playing 1s out of order — and none of it is
+   * visible anywhere else, so it belongs in the same log.
+   */
+  const MOVE_LABEL: Record<string, string> = {
+    sarcastic: "sarcastic discard",
+    gentleman: "gentleman's discard",
+    baton: "baton discard",
+    scream: "scream discard",
+    shout: "shout discard",
+    generation: "generation discard",
+    "order chop move": "order chop move",
+    "positional discard": "positional discard",
+    "positional misplay": "positional misplay",
+  };
+
+  let spoke = $derived([...analysis.discards].reverse().slice(0, 6));
 </script>
 
 <section class="card-panel log" aria-label="Bot clue readings">
   <div class="head">
-    <h2><span class="tag">bot</span> What each clue meant</h2>
+    <h2><span class="tag">bot</span> What each move meant</h2>
     <button class="link" onclick={() => (open = !open)}>{open ? "hide" : "show"}</button>
   </div>
 
@@ -91,6 +113,18 @@
               <span class="muted">({slotOf(link.order)}) — for {name(wc.identity)}</span>
             </li>
           {/if}
+        {/each}
+      </ul>
+    {/if}
+
+    {#if spoke.length > 0}
+      <ul class="spoke">
+        {#each spoke as move (move.actionIndex + ":" + move.kind)}
+          <li class="small">
+            <span class="turn">t{move.actionIndex + 1}</span>
+            <strong>{MOVE_LABEL[move.kind] ?? move.kind}</strong>
+            <span class="muted">— {move.detail}</span>
+          </li>
         {/each}
       </ul>
     {/if}
@@ -191,6 +225,18 @@
 <style>
   .log {
     border-color: color-mix(in srgb, var(--accent) 25%, var(--line));
+  }
+
+  .spoke {
+    list-style: none;
+    margin: 0 0 8px;
+    padding: 0;
+    display: grid;
+    gap: 4px;
+  }
+
+  .spoke .turn {
+    margin-right: 6px;
   }
 
   .head {

@@ -128,7 +128,8 @@ stacks run downwards.
 the requirement was that the tracker at `/` keep behaving exactly as it did:
 
 - **Nothing bot-shaped is in the plain bundle.** `index.html` loads `main.ts`
-  and the shared chunk; the bot's 10 kB is only in `bot/index.html`.
+  and the shared chunk; everything under `lib/bot` is reachable only from
+  `bot/index.html`, and `npm run build` shows the two entries separately.
 - **Three optional props** on `GameView` (`botNotes`, `aside`, `cardAside`) and
   one on `HandRow` (`botNotes`) are the whole seam. The plain app passes none,
   so its render is unchanged — `botflow.test.ts` asserts that from the outside.
@@ -153,12 +154,13 @@ need nothing special. It is the variant-level rules that break it.
 The reasoning is layered like scala-bot's:
 
 ```
-empathy.ts     common knowledge: possible/inferred identity sets per card,
-               card counting, Good Touch, chop, finesse position, hypo stacks
-connect.ts     the known / playable / prompt / finesse search that makes an
-               unplayable card make sense, and Occam's razor over the results
-hgroup.ts      what each clue meant: focus, fix, save vs play, chop moves,
-               sarcastic discards, and the re-analysis loop
+empathy.ts     what the table knows and what each player knows: identity sets
+               per card, card counting, Good Touch, chop, finesse position
+connect.ts     the known / playable / prompt / finesse / bluff search that makes
+               an unplayable card make sense, and Occam's razor over the results
+stall.ts       the positions where a clue is allowed to say nothing, ranked
+hgroup.ts      what each move meant: focus, fix, save vs play, chop moves, tempo
+               clues, the discards that speak, and the re-analysis loop
 waiting.ts     promises still outstanding, and what refutes one
 overrides.ts   your corrections, when the table plays off-book
 notes.ts       the note string, in scala-bot's format
@@ -167,6 +169,40 @@ suggest.ts     candidate moves and what each is worth
 
 **The pool is common knowledge, not ours** — a note has to mean the same thing
 to the person holding the card, or it is a peek rather than a convention.
+
+**Empathy: who can count what.** Card counting is not one calculation, it is one
+per point of view, because nobody sees their own hand. `placementsOf()` answers
+"where has every copy of this identity got to" and records, for each copy, the
+one seat that *cannot* tell it is there: a card face up on a stack is known to
+everybody, a card in Bob's hand is known to everybody except Bob. When the last
+b3 is counted into Bob's hand, every other player may strike b3 off their notes
+and Bob may not. Skipping that exemption is the classic empathy bug — it hands a
+player a deduction they had no way of making, and the note stops meaning what it
+says.
+
+Two things sit on top of that count:
+
+- **Naked groups**, scala-bot's `performCrossElim`. Cards that share a
+  possibility set and between them hold every copy of it have used it up, so
+  nothing else can be one. It is what tells five clued 5s apart when five 5s are
+  left, and no amount of counting copies one at a time will find it.
+- **`perspectiveOf(state, thoughts, seat)`**, which is the shared view's
+  opposite number: what *one player* can work out, their own hand included. Bob
+  looks at three hands, subtracts them from the deck, and knows things no note
+  records — and once the deck runs out he can name his whole hand. Reading a
+  move Bob made sometimes means asking what Bob knew rather than what the table
+  did; the level-8 positional discards are the case that needs it.
+
+Both stay inside the sight rule below. Where another seat's knowledge rests on
+looking at *our* hand, the bot cannot follow them and leaves the card wide, which
+is safe in the only direction that matters: crediting a player with more
+possibilities than they really have makes the bot read *less* into their move,
+never more. The one exception is a dead deck, where our hand is whatever the
+piles and the other hands leave over — arithmetic anybody at the table can do.
+
+The invariant that keeps all of this honest is in `empathy.test.ts`: over a whole
+recorded game, at every turn, from every seat, what a card *really is* has to stay
+possible. Ruling out the truth is what an empathy bug looks like.
 
 **What the bot may look at.** The recorder cannot see their own hand; a finished
 record fills those cards in afterwards, so reading them back would let the bot
@@ -189,7 +225,7 @@ readable while red is still on 1, because the chain walks in rank order and
 whatever unblocks it is already earlier in the same chain. Requiring each link to
 be playable *now* is what limits a bot to seeing a single rank ahead — on the
 recorded four-player game it is the difference between finding no connections at
-all and reading `r2 → r3 → r4 → r5` across three hands.
+all and reading six clues that only make sense through somebody else's card.
 
 **Occam's razor decides between readings**, on scala-bot's scale
 (`fpSimplicity`). A reading costs nothing when the first card anybody has to work
@@ -230,20 +266,77 @@ the clue log shows and what a clue correction picks from.
 ### Levels
 
 Levels gate techniques with scala-bot's own numbers (`object Level`): 2 finesses,
-3 fix and sarcastic, 4 chop moves, 5 layered, 9 stalling, 11 bluffs. The ceiling
+3 fix and sarcastic, 4 chop moves, 5 layered, 6 tempo, 7 scream and shout, 8 the
+end-game, 9 stalling, 10 gentleman's and baton discards, 11 bluffs. The ceiling
 is 11 because that is scala-bot's `MAX_H_LEVEL`; trash moves sit at 14 there and
 so are deliberately absent here rather than half-guessed.
 
-Bluffs are level 11 and are modelled where they actually bite. From common
-knowledge a bluff and a finesse are the *same clue* — nothing in the clue tells
-them apart — so the difference is written onto the blind-playing card instead:
-its note keeps every playable identity it could be, not just the one the clue
-pointed at. Only the first blind play of a reading can be a bluff, matching
-scala-bot's `finalizeConns`.
+`FULLY_IMPLEMENTED_THROUGH` is derived from the technique table rather than kept
+in step with it by hand, so marking one `implemented: false` is enough to make
+the settings screen tell the truth.
 
-Levels 1–5 are fully reasoned about; what is missing above that is listed in the
-settings screen rather than silently ignored, and a clue the bot cannot justify
-comes back as `unclear`.
+**Bluffs** are level 11, and they are a reading of their own rather than a
+footnote on a finesse. The search produces one when the card on finesse position
+is visibly playable but is *not* the card the chain needs — and three rules keep
+it from firing everywhere, all of them H-Group's:
+
+- **Bluff seat.** Only the player directly after the giver may be bluffed, so
+  `bluffSeat()` gates it. From any other seat the same clue is a layered
+  finesse; from bluff seat a bluff beats one, which is the precedence H-Group
+  states outright.
+- **The Lie Principle.** The blind play has to answer the clue on the very next
+  turn, and the focus has to come out one-away-from-playable. Together those
+  mean the bluff can only *be* the whole chain: one blind play, standing in for
+  the single rank between the stack and the card that was clued.
+- **Finesses over bluffs.** `occamsRazor` breaks a tie on the number of bluffs a
+  reading needs, so a clue that can be read truthfully is.
+
+From common knowledge the *blind-playing card* still cannot be pinned down: its
+holder cannot see it either, so its note keeps every playable identity it could
+be. Only the first blind play of a reading can be a bluff, matching scala-bot's
+`finalizeConns`.
+
+**Stalling** is level 9, and it is a fallback rather than a competitor. H-Group
+ranks the positions where a player may not discard — early game, double discard,
+locked hand, 8 clues — and ranks the clues each position licenses. `stall.ts`
+holds both ladders, and `interpretClue` only walks the second one when no play
+or save reading fits, so a clue that gets a card played is never demoted to a
+stall. The severity also decides whether a 5 clued one off the chop is a 5 Chop
+Move or a 5 Stall, and whether a tempo clue carries a chop move or is simply
+passing the turn.
+
+**Discards speak too**, which is most of levels 7 and 10. The same shape covers
+three moves — a card the whole table knew you held, thrown away — and where the
+other copy is decides which: clued (Sarcastic), on a finesse position and
+playable (Gentleman's), or on a finesse position and not (Baton, which counts as
+clued from then on). Separately, a player who declines an obvious play is
+sounding an alarm: their chop thrown at zero clues, or known rubbish thrown with
+a play in hand, moves the next player's chop.
+
+Two rules keep those from firing on a bad reading, and both come from the same
+place: **the table reads a discard by sight.** Everyone except the holder can
+see the cards, so a "known playable" only counts when the note and the card
+agree, and a Gentleman's Discard only counts when the bot can see the copy it
+hands over. That costs the bot reading alarms and handovers out of *our* hand,
+which is the one nobody at this seat can check — and where one card correction
+says it in a tap.
+
+**Positional discards and misplays** are level 8, and the only convention where
+the slot is the whole message. H-Group allows them from exactly one position: the
+deck is dead, and every card the mover holds is rubbish *to them*. That second
+half is a question about one player's knowledge rather than the table's, which is
+why it goes through `perspectiveOf` — the shared view of an unclued hand is
+almost never "all rubbish", even at the very end. Throwing any slot but the chop
+then names a slot for somebody to blind-play; when the slot wanted *is* the chop,
+a discard would read as an ordinary one and the move becomes a misplay instead.
+The receiver is the last seat in turn order holding a playable card there, and
+our own hand is only read as the target when no visible seat fits — then the
+mover must have meant us, which is a deduction rather than a guess.
+
+Levels 1–7 are fully reasoned about, and most of 8–11 is. What is missing —
+distribution clues, anxiety plays, sarcastic and certain finesses — is listed in
+the settings screen rather than silently ignored, and a clue the bot cannot
+justify still comes back as `unclear`.
 
 ### Corrections
 

@@ -13,8 +13,16 @@
 import type { GameState } from "../hanabi/engine";
 import { ActionType, type GameAction } from "../hanabi/types";
 import type { Connection } from "./connect";
-import { isPlayPromised, ordOf, type Ord, type Thought } from "./empathy";
+import {
+  finessePosition,
+  isPlayPromised,
+  ordOf,
+  visibleOrd,
+  type Ord,
+  type Thought,
+} from "./empathy";
 import { isKnown } from "../hanabi/types";
+import { levelAllows, type BotSettings } from "./conventions";
 
 export interface WaitingConnection {
   /** Index into `record.actions` of the clue that made the promise. */
@@ -65,6 +73,7 @@ export function updateWaiting(
   action: GameAction,
   actor: number,
   actionIndex: number,
+  settings: BotSettings,
 ): WaitingUpdate {
   const kept: WaitingConnection[] = [];
   const disproven: Disproof[] = [];
@@ -153,6 +162,15 @@ export function updateWaiting(
       continue;
     }
 
+    // The Ambiguous Finesse, level 5. When two hands hold the card on finesse
+    // position, the first of them is meant to trust the other and pass — so the
+    // reading survives, and the second player answering it advances the promise
+    // from their own hand.
+    if (link.kind === "finesse" && answerableElsewhere(after, thoughts, wc, link, settings)) {
+      kept.push(wc);
+      continue;
+    }
+
     drop(
       isDiscard
         ? `${before.players[actor]} discarded instead of playing`
@@ -161,6 +179,30 @@ export function updateWaiting(
   }
 
   return { kept, disproven, settled };
+}
+
+/**
+ * Somebody other than the player who passed is also sitting on the card, in the
+ * place a finesse would look.
+ *
+ * That is what makes an Ambiguous Finesse ambiguous, and it is the one case
+ * where declining to blind-play is the *correct* answer to a finesse rather
+ * than a refutation of it.
+ */
+function answerableElsewhere(
+  state: GameState,
+  thoughts: Map<number, Thought>,
+  wc: WaitingConnection,
+  link: Connection,
+  settings: BotSettings,
+): boolean {
+  if (!levelAllows(settings, 5) || link.hidden) return false;
+  for (let seat = 0; seat < state.players.length; seat++) {
+    if (seat === link.playerIndex || seat === wc.giver) continue;
+    const position = finessePosition(state, thoughts, seat);
+    if (position !== undefined && visibleOrd(state, position) === link.identity) return true;
+  }
+  return false;
 }
 
 function advance(wc: WaitingConnection): WaitingConnection | undefined {

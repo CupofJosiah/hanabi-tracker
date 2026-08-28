@@ -90,6 +90,14 @@ export interface Thought {
   narrowed: boolean;
   /** True when you overruled the bot on this card, so the UI can say so. */
   overridden: boolean;
+  /**
+   * True when the card counts as clued without ever having been clued.
+   *
+   * A Baton Discard hands a known card over to somebody else, and the receiver
+   * treats it as touched from then on: it is off their chop and their finesse
+   * position has moved past it.
+   */
+  touched: boolean;
   /** Turn the card was drawn, for finding the newest card in a hand. */
   drawnTurn: number;
 }
@@ -106,6 +114,7 @@ export function newThought(order: number, possible: Set<Ord>, drawnTurn: number)
     reset: false,
     narrowed: false,
     overridden: false,
+    touched: false,
     drawnTurn,
   };
 }
@@ -260,34 +269,233 @@ export function criticalOrds(state: GameState): Set<Ord> {
 }
 
 /**
- * Copies of each identity that common knowledge cannot yet place.
+ * Where every copy of every identity has got to, as far as a point of view can
+ * tell — scala-bot's `certainMap`.
  *
- * Counts down the stacks and the discard pile — visible to everyone — and then
- * any card the table has already narrowed to one identity. Held cards whose
- * faces only *we* can see are deliberately not counted: the point of view here
- * is the one every player shares.
+ * Each entry records where a copy is *and the one seat that cannot tell it is
+ * there*, which is the whole of empathy. A card face up on a stack is known to
+ * everybody. A card sitting in Bob's hand is known to everybody except Bob, so
+ * when the table counts the last b3 into Bob's hand, every other player may
+ * strike b3 off their notes and Bob may not — he is the one person who cannot
+ * look at it.
  */
-function commonCounts(state: GameState, thoughts: Map<number, Thought>): Map<Ord, number> {
-  const counts = new Map<Ord, number>();
-  for (const identity of allIdentities(state.variant)) {
-    counts.set(ordOf(identity), copiesOf(state.variant, identity));
-  }
+interface Placement {
+  /** The held card, or -1 for one face up on a stack or in the discard pile. */
+  order: number;
+  /** The seat that cannot see this copy, or -1 when everyone can. */
+  unknownTo: number;
+}
 
-  const spend = (identity: Identity): void => {
-    if (!isKnown(identity)) return;
-    const ord = ordOf(identity);
-    counts.set(ord, Math.max(0, (counts.get(ord) ?? 0) - 1));
+/**
+ * What a viewer can see of a held card, so far as the bot may say it.
+ *
+ * `viewer` is whose eyes to look through: a seat index, or `undefined` for the
+ * view every seat shares. Three rules, in order.
+ *
+ * - Nobody sees their own hand, so a card the viewer holds is invisible.
+ * - The bot cannot see *our* hand either, and may not report those faces on
+ *   another seat's behalf even though that seat is looking right at them. The
+ *   exception is a dead deck: once the last card is dealt, our hand is whatever
+ *   the piles and the other hands leave over, and counting that is arithmetic
+ *   anybody at the table can do rather than a peek.
+ * - Otherwise the face is there to be read.
+ */
+function sightOf(state: GameState, order: number, viewer: number | undefined): Ord | undefined {
+  const card = state.cards[order];
+  if (!card || card.holder < 0 || !isKnown(card.identity)) return undefined;
+  if (card.holder === viewer) return undefined;
+  if (card.holder === state.ourPlayerIndex && state.cardsRemaining > 0) return undefined;
+  return ordOf(card.identity);
+}
+
+/** Every copy the viewer can account for, keyed by identity. */
+function placementsOf(
+  state: GameState,
+  thoughts: Map<number, Thought>,
+  viewer: number | undefined,
+): Map<Ord, Placement[]> {
+  const out = new Map<Ord, Placement[]>();
+  const add = (ord: Ord, placement: Placement): void => {
+    const list = out.get(ord);
+    if (list) list.push(placement);
+    else out.set(ord, [placement]);
   };
 
   for (const card of state.cards) {
     if (!card) continue;
-    if (card.location === "played" || card.location === "discarded") spend(card.identity);
+    if (card.location === "played" || card.location === "discarded") {
+      if (isKnown(card.identity)) add(ordOf(card.identity), { order: -1, unknownTo: -1 });
+      continue;
+    }
+    if (card.holder < 0) continue;
+
+    // A card the table has already pinned down is placed for everybody, its
+    // holder included, so nobody is left in the dark about it.
+    const thought = thoughts.get(card.order);
+    if (thought && thought.possible.size === 1) {
+      add([...thought.possible][0], { order: card.order, unknownTo: -1 });
+      continue;
+    }
+
+    const seen = sightOf(state, card.order, viewer);
+    if (seen !== undefined) add(seen, { order: card.order, unknownTo: card.holder });
   }
-  for (const thought of thoughts.values()) {
-    if (thought.possible.size === 1) spend(identityOfOrd([...thought.possible][0]));
+  return out;
+}
+
+/**
+ * Whether a card may still be an identity, given where the copies have got to.
+ *
+ * Once every copy is accounted for the identity is off the table — except for
+ * the card that *is* one of those copies, and except for anyone holding a copy
+ * they cannot see. Skipping that second exemption is the classic empathy bug:
+ * it hands a player a deduction they had no way of making.
+ */
+function placeable(
+  placements: Map<Ord, Placement[]>,
+  copies: number,
+  ord: Ord,
+  order: number,
+  holder: number,
+): boolean {
+  const placed = placements.get(ord);
+  if (!placed || placed.length < copies) return true;
+  return placed.some((p) => p.order === order || p.unknownTo === holder);
+}
+
+/**
+ * Naked groups — the sudoku half of empathy, scala-bot's `performCrossElim`.
+ *
+ * When a set of cards share a possibility set and between them hold every copy
+ * of it, they have used it up: three cards that must be the three remaining 1s
+ * say that nothing else is a 1. It is what tells five clued 5s apart when five
+ * 5s are left, and no amount of counting copies one at a time will find it.
+ *
+ * Only `possible` feeds this, never a conventional reading, so a wrong note
+ * cannot propagate through it.
+ */
+function nakedGroups(
+  state: GameState,
+  thoughts: Map<number, Thought>,
+  barred: Map<number, Set<Ord>>,
+): boolean {
+  const groups = new Map<string, number[]>();
+  for (const [order, thought] of thoughts) {
+    const card = state.cards[order];
+    if (!card || card.holder < 0 || thought.possible.size < 2) continue;
+    const key = [...thought.possible].sort((a, b) => a - b).join(",");
+    const list = groups.get(key);
+    if (list) list.push(order);
+    else groups.set(key, [order]);
   }
 
-  return counts;
+  let changed = false;
+  for (const [key, orders] of groups) {
+    const ords = key.split(",").map(Number);
+    let copies = 0;
+    for (const ord of ords) copies += copiesOf(state.variant, identityOfOrd(ord));
+    if (orders.length < copies) continue;
+
+    const inGroup = new Set(orders);
+    for (const [order, thought] of thoughts) {
+      const card = state.cards[order];
+      if (!card || card.holder < 0 || inGroup.has(order)) continue;
+      for (const ord of ords) {
+        if (!thought.possible.has(ord)) continue;
+        let set = barred.get(order);
+        if (!set) {
+          set = new Set<Ord>();
+          barred.set(order, set);
+        }
+        if (set.has(ord)) continue;
+        set.add(ord);
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
+/**
+ * What one seat can work out about the cards, ours included.
+ *
+ * The table's shared view is deliberately blind: it counts only what everybody
+ * can count. A player is not. Bob looks at three hands, subtracts them from the
+ * deck, and knows things about his own cards that no note records — and by the
+ * time the deck runs out he can name his whole hand. Reading a move Bob made
+ * means asking what *Bob* knew, not what the table did.
+ *
+ * The answer is exact for our own seat and for anything a dead deck has
+ * settled. Elsewhere it is a safe over-estimate: another seat can see our hand
+ * and the bot cannot, so where that sight would have narrowed something this
+ * leaves it wide. Crediting a player with more possibilities than they really
+ * have only ever makes the bot read *less* into what they did.
+ */
+export function perspectiveOf(
+  state: GameState,
+  thoughts: Map<number, Thought>,
+  seat: number,
+): Map<number, Set<Ord>> {
+  const view = new Map<number, Set<Ord>>();
+  const counts = new Map<Ord, number>();
+  for (const identity of allIdentities(state.variant)) {
+    counts.set(ordOf(identity), copiesOf(state.variant, identity));
+  }
+  const spend = (from: Map<Ord, number>, ord: Ord): void => {
+    from.set(ord, (from.get(ord) ?? 0) - 1);
+  };
+
+  for (const card of state.cards) {
+    if (!card) continue;
+    if (card.location === "played" || card.location === "discarded") {
+      if (isKnown(card.identity)) spend(counts, ordOf(card.identity));
+      continue;
+    }
+    if (card.holder < 0) continue;
+
+    const thought = thoughts.get(card.order);
+    const pool = new Set<Ord>(thought ? thought.possible : []);
+    if (card.holder === seat) {
+      // Counted in the pass below, as the seat narrows their own hand down.
+      view.set(card.order, pool);
+      continue;
+    }
+
+    const seen = sightOf(state, card.order, seat);
+    if (seen !== undefined) {
+      spend(counts, seen);
+      view.set(card.order, new Set([seen]));
+      continue;
+    }
+    // A hand the bot may not look at either. The seat can see it and we cannot,
+    // so the honest answer is whatever the table already made of the card.
+    if (pool.size === 1) spend(counts, [...pool][0]);
+    view.set(card.order, pool);
+  }
+
+  // Settling one of the seat's own cards frees a copy for the next, so this
+  // repeats: two clued cards that could each be one of two 5s name each other.
+  const hand = handOrders(state, seat);
+  for (let pass = 0; pass < hand.length + 1; pass++) {
+    const left = new Map(counts);
+    for (const order of hand) {
+      const pool = view.get(order);
+      if (pool?.size === 1) spend(left, [...pool][0]);
+    }
+
+    let changed = false;
+    for (const order of hand) {
+      const pool = view.get(order);
+      if (!pool || pool.size <= 1) continue;
+      const next = new Set<Ord>();
+      for (const ord of pool) if ((left.get(ord) ?? 0) > 0) next.add(ord);
+      if (next.size === 0 || next.size === pool.size) continue;
+      view.set(order, next);
+      changed = true;
+    }
+    if (!changed) break;
+  }
+  return view;
 }
 
 /**
@@ -296,25 +504,44 @@ function commonCounts(state: GameState, thoughts: Map<number, Thought>): Map<Ord
  * Repeats until nothing more drops out, because settling one card frees the
  * count for the next — three clued 1s in a hand where the fourth 1 is discarded
  * tell each other apart this way.
+ *
+ * The count is the table's, not ours: `placementsOf` decides which copies the
+ * shared view may spend and, for each one, which single seat has to be let off
+ * spending it. Naked groups run on top, and their findings are remembered in
+ * `barred` across passes because rebuilding from the clues alone would hand
+ * back what they just took away.
  */
 export function refreshPossible(state: GameState, thoughts: Map<number, Thought>): void {
   const variant = state.variant;
   const identities = allIdentities(variant);
+  const barred = new Map<number, Set<Ord>>();
 
   for (let pass = 0; pass < 6; pass++) {
-    const counts = commonCounts(state, thoughts);
+    const placements = placementsOf(state, thoughts, undefined);
     let changed = false;
 
     for (const thought of thoughts.values()) {
       const card = state.cards[thought.order];
       if (!card || card.holder < 0) continue;
 
+      const allowed = barred.get(thought.order);
       const next = new Set<Ord>();
       for (const identity of identities) {
         const ord = ordOf(identity);
-        // A card is always allowed to be what it has already been settled as.
-        const available = (counts.get(ord) ?? 0) > 0 || thought.possible.size === 1;
-        if (available && matchesKnowledge(variant, identity, card.knowledge)) next.add(ord);
+        if (!matchesKnowledge(variant, identity, card.knowledge)) continue;
+        if (allowed?.has(ord)) continue;
+        const copies = copiesOf(variant, identity);
+        if (!placeable(placements, copies, ord, thought.order, card.holder)) continue;
+        next.add(ord);
+      }
+
+      // Counting the copies has contradicted the clues, which means the record
+      // itself is wrong — a mis-entered card, most likely. The clues are the
+      // part a player can be sure of, so keep those and let the count go.
+      if (next.size === 0) {
+        for (const identity of identities) {
+          if (matchesKnowledge(variant, identity, card.knowledge)) next.add(ordOf(identity));
+        }
       }
 
       if (next.size !== thought.possible.size) changed = true;
@@ -339,6 +566,7 @@ export function refreshPossible(state: GameState, thoughts: Map<number, Thought>
       changed = true;
     }
 
+    if (nakedGroups(state, thoughts, barred)) changed = true;
     if (!changed) break;
   }
 }
@@ -413,7 +641,9 @@ export function chopOf(
     const order = hand[i];
     const card = state.cards[order];
     if (!card || card.knowledge.clued) continue;
-    if (thoughts.get(order)?.status === "chop moved") continue;
+    const thought = thoughts.get(order);
+    if (thought?.touched) continue;
+    if (thought?.status === "chop moved") continue;
     return order;
   }
   return undefined;
@@ -435,7 +665,9 @@ export function finessePosition(
   for (const order of handOrders(state, playerIndex)) {
     const card = state.cards[order];
     if (!card || card.knowledge.clued || taken.has(order)) continue;
-    const status = thoughts.get(order)?.status;
+    const thought = thoughts.get(order);
+    if (thought?.touched) continue;
+    const status = thought?.status;
     if (status === "chop moved" || status === "finessed") continue;
     return order;
   }

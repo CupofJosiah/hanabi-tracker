@@ -8,7 +8,12 @@ import { describe, expect, it } from "vitest";
 import fixture from "../hanabi/fixtures/live-game-4p.json";
 import { fromHanabLive } from "../hanabi/hanabLive";
 import { ActionType, type GameAction, type GameRecord, type Identity } from "../hanabi/types";
-import { DEFAULT_BOT_SETTINGS, missingTechniques, type BotSettings } from "./conventions";
+import {
+  DEFAULT_BOT_SETTINGS,
+  FULLY_IMPLEMENTED_THROUGH,
+  missingTechniques,
+  type BotSettings,
+} from "./conventions";
 import { analyse, unsupportedVariantReason } from "./hgroup";
 import { getVariant } from "../hanabi/variants";
 import { ordOf } from "./empathy";
@@ -507,17 +512,24 @@ describe("running over a real game", () => {
       return tally;
     }, {});
 
-    // A real table playing H-Group: 22 of the 24 clues get a reading, and the
-    // mix is what you would expect — mostly play clues, a good number of saves
-    // on chop, and one 5 clued a slot off the chop to move it.
+    // A real table playing H-Group: 19 of the 24 clues get a reading, and the
+    // mix is what you would expect — mostly play clues, saves on chop, and one
+    // 5 clued a slot off the chop to move it.
     //
     // The saves are the interesting number. Every 2 and critical card clued on
     // a chop is one, and reading those as play clues (which is what happens
     // without the save rules) is how a bot talks you into misplaying a card you
-    // were being asked to hold. The two left unread are both a critical card
-    // clued off chop, which H-Group has no reading for — and scala-bot flags
-    // mistakes around the same turns, so the table was off-book there.
-    expect(kinds).toEqual({ play: 15, save: 6, "chop move": 1, unclear: 2 });
+    // were being asked to hold.
+    //
+    // The five left unread are the table being off-book, and empathy is what
+    // shows it. Two of them (turns 18 and 42) are clues the *giver* could see
+    // made no sense: one saves a red 4 while holding the only other copy, the
+    // other points at a red 5 nobody in that hand has. Counting the copies
+    // everybody can see rules both out, where reading the clue on its own
+    // invents a card to fit. The rest are a critical card clued off chop and a
+    // prompt that lands on a bad-touched card — scala-bot flags mistakes around
+    // the same turns.
+    expect(kinds).toEqual({ play: 14, save: 4, "chop move": 1, unclear: 5 });
   });
 
   /**
@@ -527,32 +539,43 @@ describe("running over a real game", () => {
    * bare play stacks, so nothing more than one rank past the board could ever
    * be justified and every deeper clue read as a direct play or as nonsense.
    * scala-bot finds the same chains on the same game.
+   *
+   * The chains are checked against what the players went on to *do*, which is
+   * the only evidence that matters. A chain the bot invents through a card the
+   * table can see is something else is not a reading, it is a coincidence — and
+   * this game contains one of those, on turn 48, where the red 4 the clue needs
+   * is sitting under a bad-touched green 4 and the prompt dies on it.
    */
   it("reads clues that only make sense through other people's cards", () => {
     const analysis = analyse(record, SETTINGS);
     const through = analysis.interps.filter((interp) => interp.connections.length > 0);
     expect(through.length).toBeGreaterThanOrEqual(6);
 
-    // The deepest of them: a red clue that only means r5 once three separate
-    // players have each put a red card down first.
-    const chain = analysis.interps.find((interp) => interp.connections.length >= 3);
-    expect(chain).toBeDefined();
-    expect(chain?.kind).toBe("play");
-    expect(chain?.connections.map((link) => link.identity)).toEqual([
-      ordOf(id(RED, 2)),
-      ordOf(id(RED, 3)),
-      ordOf(id(RED, 4)),
-    ]);
-    // Three different hands, every one of them a card the whole table has
-    // already placed — so the clue costs nobody a blind play.
-    const seats = new Set(chain?.connections.map((link) => link.playerIndex));
-    expect(seats.size).toBe(3);
-    expect(chain?.connections.every((link) => link.kind === "known")).toBe(true);
+    // Nobody is ever asked to supply a card they are not holding, and the giver
+    // is never one of the links: they can see their own clue, so asking them to
+    // work something out from it says nothing.
+    for (const interp of through) {
+      const giver = giverOf(record, interp.actionIndex);
+      for (const link of interp.connections) {
+        expect(link.playerIndex).not.toBe(giver);
+        const held = analyse(record, SETTINGS, undefined, interp.actionIndex).state.cards[
+          link.order
+        ];
+        // `assumed` links are in our own hand, where nobody can check.
+        if (link.assumed || link.order < 0) continue;
+        expect(ordOf(held!.identity)).toBe(link.identity);
+      }
+    }
 
-    // The giver is never one of them: they can see their own clue, so asking
-    // them to work something out from it says nothing.
-    const giver = giverOf(record, chain!.actionIndex);
-    expect(seats.has(giver)).toBe(false);
+    // The deepest of them, and the one the game settles: a red clue on claire's
+    // r3 that only reads as r3 once tyler blind-plays the r2 in front of it.
+    // Tyler plays r2 on the very next turn and claire plays r3 after that.
+    const finesse = analysis.interps.find((interp) =>
+      interp.connections.some((link) => link.kind === "finesse"),
+    );
+    expect(finesse?.kind).toBe("play");
+    expect(finesse?.connections.map((link) => link.identity)).toEqual([ordOf(id(RED, 2))]);
+    expect(finesse?.chosen).toContain(ordOf(id(RED, 3)));
   });
 
   it("never writes into the game's own notes", () => {
@@ -662,14 +685,15 @@ describe("correcting the bot", () => {
 describe("convention settings", () => {
   it("is honest about the techniques it does not implement", () => {
     expect(missingTechniques({ ...DEFAULT_BOT_SETTINGS, level: 1 })).toEqual([]);
-    // Everything through layered finesses is reasoned about.
-    expect(missingTechniques({ ...DEFAULT_BOT_SETTINGS, level: 5 })).toEqual([]);
+    // Everything through the scream and shout discards is reasoned about.
+    expect(missingTechniques({ ...DEFAULT_BOT_SETTINGS, level: 7 })).toEqual([]);
+    expect(FULLY_IMPLEMENTED_THROUGH).toBe(7);
     const atEleven = missingTechniques({ ...DEFAULT_BOT_SETTINGS, level: 11 }).map((t) => t.name);
-    expect(atEleven).toContain("Tempo clues");
-    expect(atEleven).toContain("Endgame solving");
-    // These two are in, so they must not be claimed as missing.
-    expect(atEleven).not.toContain("Bluffs");
-    expect(atEleven).not.toContain("Sarcastic discards");
+    expect(atEleven).toEqual([
+      "Distribution clues",
+      "Anxiety plays",
+      "Sarcastic & certain finesses",
+    ]);
   });
 
   it("stops looking for finesses below level 2", () => {
