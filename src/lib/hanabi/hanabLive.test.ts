@@ -57,6 +57,18 @@ describe("export shape", () => {
     expect(toHanabLive(houseRules).options).toEqual({ variant: "No Variant", deckPlays: true });
   });
 
+  it("round-trips a changed hand size", () => {
+    const extra = createGame({
+      players: ["ana", "bo"],
+      ourPlayerIndex: 0,
+      variantName: "No Variant",
+      options: { oneExtraCard: true },
+    });
+    const exported = toHanabLive(extra);
+    expect(exported.options).toEqual({ variant: "No Variant", oneExtraCard: true });
+    expect(fromHanabLive(exported).options.oneExtraCard).toBe(true);
+  });
+
   it("files notes under the seat that wrote them", () => {
     const noted = setNote(base, 4, "probably b1");
     const exported = toHanabLive(noted);

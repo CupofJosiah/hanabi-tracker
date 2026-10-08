@@ -51,6 +51,33 @@ describe("dealing", () => {
     expect(stateOf(record).cards[9].identity).toEqual(BLUE_3);
     expect(stateOf(record).cards[9].slot).toBe(1);
   });
+
+  it("deals one more or one fewer card each under those house rules", () => {
+    const extra = createGame({
+      players: ["us", "bo", "cy"],
+      ourPlayerIndex: 0,
+      variantName: "No Variant",
+      options: { oneExtraCard: true },
+    });
+    expect(extra.deck).toHaveLength(18);
+    expect(initialDeckIndex(3, 1, 1, extra.options)).toBe(11);
+    expect(stateOf(extra).hands[2]).toEqual([17, 16, 15, 14, 13, 12]);
+
+    const less = createGame({
+      players: ["us", "bo", "cy"],
+      ourPlayerIndex: 0,
+      variantName: "No Variant",
+      options: { oneLessCard: true },
+    });
+    expect(less.deck).toHaveLength(12);
+    expect(stateOf(less).hands[1]).toEqual([7, 6, 5, 4]);
+    expect(setupComplete(less)).toBe(false);
+    let filled = less;
+    for (const playerIndex of [1, 2]) {
+      for (let slot = 1; slot <= 4; slot++) filled = setDealtCard(filled, playerIndex, slot, RED_1);
+    }
+    expect(setupComplete(filled)).toBe(true);
+  });
 });
 
 describe("recording turns", () => {

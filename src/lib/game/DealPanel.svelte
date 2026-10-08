@@ -15,7 +15,7 @@
   let { record, onchange, onready }: Props = $props();
 
   let variant = $derived(getVariant(record.variantName));
-  let size = $derived(handSize(record.players.length));
+  let size = $derived(handSize(record.players.length, record.options));
   let picking = $state<{ playerIndex: number; slot: number } | undefined>(undefined);
   let complete = $derived(setupComplete(record));
 
@@ -34,7 +34,8 @@
   });
 
   function cardAt(playerIndex: number, slot: number): Identity {
-    return record.deck[initialDeckIndex(record.players.length, playerIndex, slot)] ?? UNKNOWN;
+    const index = initialDeckIndex(record.players.length, playerIndex, slot, record.options);
+    return record.deck[index] ?? UNKNOWN;
   }
 
   /** Moves to the next empty slot so a hand can be entered without extra taps. */

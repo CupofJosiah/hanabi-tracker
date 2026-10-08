@@ -38,6 +38,8 @@ export interface HanabLiveGame {
     variant: string;
     deckPlays?: boolean;
     emptyClues?: boolean;
+    oneExtraCard?: boolean;
+    oneLessCard?: boolean;
   };
 }
 
@@ -57,6 +59,8 @@ export function toHanabLive(record: GameRecord): HanabLiveGame {
   const options: HanabLiveGame["options"] = { variant: record.variantName };
   if (record.options.deckPlays) options.deckPlays = true;
   if (record.options.emptyClues) options.emptyClues = true;
+  if (record.options.oneExtraCard) options.oneExtraCard = true;
+  if (record.options.oneLessCard) options.oneLessCard = true;
 
   return {
     id: record.hanabLiveId ?? 0,
@@ -185,7 +189,14 @@ export function fromHanabLive(
     );
   }
 
-  if (deck.length < players.length * handSize(players.length)) {
+  const options = {
+    deckPlays: rawOptions.deckPlays === true,
+    emptyClues: rawOptions.emptyClues === true,
+    oneExtraCard: rawOptions.oneExtraCard === true,
+    oneLessCard: rawOptions.oneLessCard === true,
+  };
+
+  if (deck.length < players.length * handSize(players.length, options)) {
     throw new ImportError("The deck is too short for the starting hands.");
   }
 
@@ -213,9 +224,6 @@ export function fromHanabLive(
     notes,
     finishedAt: now,
     hanabLiveId: typeof data.id === "number" && data.id > 0 ? data.id : undefined,
-    options: {
-      deckPlays: rawOptions.deckPlays === true,
-      emptyClues: rawOptions.emptyClues === true,
-    },
+    options,
   };
 }

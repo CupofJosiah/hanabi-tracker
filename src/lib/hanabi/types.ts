@@ -121,6 +121,10 @@ export interface GameOptions {
   deckPlays: boolean;
   /** hanab.live rule: clues that touch no cards are legal. */
   emptyClues: boolean;
+  /** hanab.live rule: everyone holds one card more than usual. */
+  oneExtraCard?: boolean;
+  /** hanab.live rule: everyone holds one card fewer than usual. */
+  oneLessCard?: boolean;
 }
 
 export const DEFAULT_OPTIONS: GameOptions = { deckPlays: false, emptyClues: false };
@@ -128,12 +132,16 @@ export const DEFAULT_OPTIONS: GameOptions = { deckPlays: false, emptyClues: fals
 /** hanab.live's hand sizes, indexed by player count. */
 const HAND_SIZES = [0, 0, 5, 5, 4, 4, 3];
 
-export function handSize(numPlayers: number): number {
+/** Cards per hand, after the one-extra/one-less-card house rules, as hanab.live counts them. */
+export function handSize(
+  numPlayers: number,
+  options?: Pick<GameOptions, "oneExtraCard" | "oneLessCard">,
+): number {
   const size = HAND_SIZES[numPlayers];
   if (size === undefined || size === 0) {
     throw new Error(`Hanabi supports 2-6 players, not ${numPlayers}`);
   }
-  return size;
+  return size + (options?.oneExtraCard ? 1 : 0) - (options?.oneLessCard ? 1 : 0);
 }
 
 export const MIN_PLAYERS = 2;
