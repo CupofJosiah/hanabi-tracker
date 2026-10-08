@@ -22,6 +22,8 @@
   );
   let deckPlays = $state(false);
   let emptyClues = $state(false);
+  let oneExtraCard = $state(false);
+  let oneLessCard = $state(false);
   let variantOpen = $state(false);
   let variantQuery = $state("");
 
@@ -66,7 +68,7 @@
         players: trimmed,
         ourPlayerIndex: ourIndex,
         variantName,
-        options: { deckPlays, emptyClues },
+        options: { deckPlays, emptyClues, oneExtraCard, oneLessCard },
       });
       app.put(record);
       app.updateSettings({
@@ -90,7 +92,7 @@
   <section class="card-panel stack">
     <div class="spread">
       <h3>Players in turn order</h3>
-      <span class="muted small">{names.length} · {handSize(names.length)} cards each</span>
+      <span class="muted small">{names.length} · {handSize(names.length, { oneExtraCard, oneLessCard })} cards each</span>
     </div>
     <p class="muted small">
       List everyone starting with whoever takes the first turn, then pick your own seat — that hand
@@ -176,6 +178,23 @@
     <label class="check">
       <input type="checkbox" bind:checked={emptyClues} />
       <span>Empty clues allowed</span>
+    </label>
+    <!-- Together they would cancel out, so picking one clears the other. -->
+    <label class="check">
+      <input
+        type="checkbox"
+        bind:checked={oneExtraCard}
+        onchange={() => oneExtraCard && (oneLessCard = false)}
+      />
+      <span>One extra card — everyone holds one more card than usual</span>
+    </label>
+    <label class="check">
+      <input
+        type="checkbox"
+        bind:checked={oneLessCard}
+        onchange={() => oneLessCard && (oneExtraCard = false)}
+      />
+      <span>One less card — everyone holds one fewer card than usual</span>
     </label>
   </details>
 </div>

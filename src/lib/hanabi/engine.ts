@@ -158,7 +158,7 @@ function discardTokenValue(variant: Variant): number {
 export function replay(input: ReplayInput, through = Number.POSITIVE_INFINITY): GameState {
   const { players, variant, deck, actions, touchedByAction, options } = input;
   const numPlayers = players.length;
-  const cardsPerHand = handSize(numPlayers);
+  const cardsPerHand = handSize(numPlayers, options);
 
   const state: GameState = {
     players,

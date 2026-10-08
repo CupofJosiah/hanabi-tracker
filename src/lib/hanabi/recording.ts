@@ -32,7 +32,8 @@ export interface NewGameInput {
 export function createGame(input: NewGameInput): GameRecord {
   const { players, ourPlayerIndex, variantName } = input;
   const variant = getVariant(variantName);
-  const dealt = players.length * handSize(players.length);
+  const options = { ...DEFAULT_OPTIONS, ...input.options };
+  const dealt = players.length * handSize(players.length, options);
   if (dealt > variant.totalCards) {
     throw new Error(`${variantName} does not have enough cards for ${players.length} players.`);
   }
@@ -50,7 +51,7 @@ export function createGame(input: NewGameInput): GameRecord {
     actions: [],
     touchedByAction: {},
     notes: {},
-    options: { ...DEFAULT_OPTIONS, ...input.options },
+    options,
   };
 }
 
@@ -69,8 +70,13 @@ export function defaultTitle(players: readonly string[], at: number): string {
  * hanab.live deals a whole hand at a time and every draw becomes slot 1, so
  * within a seat's block the highest index is the newest card.
  */
-export function initialDeckIndex(numPlayers: number, playerIndex: number, slot: number): number {
-  const size = handSize(numPlayers);
+export function initialDeckIndex(
+  numPlayers: number,
+  playerIndex: number,
+  slot: number,
+  options?: GameOptions,
+): number {
+  const size = handSize(numPlayers, options);
   return playerIndex * size + (size - slot);
 }
 
@@ -82,17 +88,18 @@ export function setDealtCard(
   identity: Identity,
 ): GameRecord {
   const deck = [...record.deck];
-  deck[initialDeckIndex(record.players.length, playerIndex, slot)] = { ...identity };
+  deck[initialDeckIndex(record.players.length, playerIndex, slot, record.options)] = { ...identity };
   return touch({ ...record, deck });
 }
 
 /** True once every visible starting card has been entered. */
 export function setupComplete(record: GameRecord): boolean {
-  const size = handSize(record.players.length);
+  const size = handSize(record.players.length, record.options);
   for (let playerIndex = 0; playerIndex < record.players.length; playerIndex++) {
     if (playerIndex === record.ourPlayerIndex) continue;
     for (let slot = 1; slot <= size; slot++) {
-      const card = record.deck[initialDeckIndex(record.players.length, playerIndex, slot)];
+      const card =
+        record.deck[initialDeckIndex(record.players.length, playerIndex, slot, record.options)];
       if (!card || card.suitIndex < 0) return false;
     }
   }
@@ -210,7 +217,7 @@ export function undo(record: GameRecord): GameRecord {
 }
 
 function minimumDeckLength(record: GameRecord): number {
-  return record.players.length * handSize(record.players.length);
+  return record.players.length * handSize(record.players.length, record.options);
 }
 
 /**
