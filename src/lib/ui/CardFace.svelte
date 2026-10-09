@@ -1,6 +1,7 @@
 <script lang="ts">
   import { UNKNOWN, isKnown, type Identity } from "../hanabi/types";
   import type { CardKnowledge } from "../hanabi/engine";
+  import { noteView, parseNote, sharedIdentity, type NoteBorder } from "../hanabi/notes";
   import {
     clueName,
     identityName,
@@ -21,7 +22,10 @@
     selected?: boolean;
     dim?: boolean;
     highlight?: boolean;
+    /** The card's note, drawn the way hanab.live draws it. Only pass it for a card in a hand. */
     note?: string;
+    /** Once the game is over, a note no longer marks or borders its card. */
+    finished?: boolean;
     onclick?: () => void;
     label?: string;
   }
@@ -37,50 +41,90 @@
     dim = false,
     highlight = false,
     note,
+    finished = false,
     onclick,
     label,
   }: Props = $props();
 
-  // A hidden card with a single remaining candidate is effectively known; show it
-  // greyed out so it reads as "deduced" rather than "seen".
-  let deduced = $derived(
-    !isKnown(identity) && possibilities?.length === 1 ? possibilities[0] : undefined,
-  );
-  let shown = $derived(isKnown(identity) ? identity : deduced);
-  let suit = $derived(shown ? variant.suits[shown.suitIndex] : undefined);
+  const borderWording: Partial<Record<NoteBorder, string>> = {
+    finessed: "finessed",
+    "chop-moved": "chop moved",
+    "discard-permission": "may be discarded",
+  };
+  const markWording = {
+    trash: "known trash",
+    question: "question mark",
+    exclamation: "exclamation mark",
+    fix: "needs a fix",
+  };
 
-  let accessibleName = $derived(
-    label ??
-      (isKnown(identity)
-        ? identityName(variant, identity)
-        : deduced
-          ? `probably ${identityName(variant, deduced)}`
-          : "unknown card"),
+  let view = $derived(
+    noteView(note ? parseNote(variant, note) : undefined, { identity, knowledge }, possibilities, finished),
   );
+  let candidates = $derived(view.possibilities);
+
+  // A note that narrows a hidden card shows it as whatever suit and rank the
+  // note pins down, in full colour, as hanab.live does.
+  let noted = $derived(
+    !view.blank && view.narrowed && candidates ? sharedIdentity(candidates) : undefined,
+  );
+  // Otherwise a hidden card with a single remaining candidate is effectively
+  // known; show it greyed out so it reads as "deduced" rather than "seen".
+  let deduced = $derived(
+    !view.blank && !view.narrowed && !isKnown(identity) && candidates?.length === 1
+      ? candidates[0]
+      : undefined,
+  );
+  let face = $derived(
+    view.blank ? UNKNOWN : isKnown(identity) ? identity : (noted ?? deduced ?? UNKNOWN),
+  );
+  let suit = $derived(face.suitIndex >= 0 ? variant.suits[face.suitIndex] : undefined);
+
+  function notedName(shared: Identity): string {
+    if (isKnown(shared)) return `noted ${identityName(variant, shared)}`;
+    if (shared.suitIndex >= 0) return `noted ${variant.suits[shared.suitIndex].display}`;
+    if (shared.rank >= 0) return `noted ${rankLabel(shared.rank)}`;
+    return "unknown card, noted";
+  }
+
+  let accessibleName = $derived.by(() => {
+    if (label) return label;
+    const name = view.blank
+      ? "blank card"
+      : isKnown(identity)
+        ? identityName(variant, identity)
+        : noted
+          ? notedName(noted)
+          : deduced
+            ? `probably ${identityName(variant, deduced)}`
+            : "unknown card";
+    const extra = view.border ? borderWording[view.border] : undefined;
+    return [name, extra, ...view.marks.map((mark) => markWording[mark])].filter(Boolean).join(", ");
+  });
 </script>
 
 <svelte:element
   this={onclick ? "button" : "div"}
   type={onclick ? "button" : undefined}
-  class="card {size}"
+  class="card {size} {view.border ?? ''}"
   class:selected
   class:dim
   class:highlight
-  class:clued={knowledge?.clued}
-  class:deduced={!isKnown(identity) && deduced !== undefined}
-  class:unknown={!shown}
-  style:background={shown ? suitBackground(suit) : undefined}
-  style:color={shown ? suitInk(suit) : undefined}
+  class:faded={view.faded}
+  class:deduced={deduced !== undefined}
+  class:unknown={!suit}
+  style:background={suit ? suitBackground(suit) : undefined}
+  style:color={suit ? suitInk(suit) : undefined}
   role={onclick ? "button" : "img"}
   aria-label={accessibleName}
   aria-pressed={onclick ? selected : undefined}
   {onclick}
 >
-  {#if shown}
-    <span class="rank">{rankLabel(shown.rank)}</span>
-    <span class="suit">{suitAbbreviation(variant, shown.suitIndex)}</span>
-  {:else}
-    <span class="rank faint">?</span>
+  <span class="rank" class:faint={face.rank < 0}>{rankLabel(face.rank)}</span>
+  {#if suit}
+    <span class="suit">{suitAbbreviation(variant, face.suitIndex)}</span>
+  {/if}
+  {#if !isKnown(face) && !view.blank}
     {#if knowledge && (knowledge.positiveRanks.length > 0 || knowledge.positiveColors.length > 0)}
       <span class="chips">
         {#each knowledge.positiveRanks as rank (rank)}
@@ -93,9 +137,31 @@
         {/each}
       </span>
     {/if}
-    {#if possibilities && possibilities.length > 1 && possibilities.length <= 4}
-      <span class="maybe">{possibilities.map((p) => identityName(variant, p)).join(" ")}</span>
+    {#if !suit && candidates && candidates.length > 1 && candidates.length <= 4}
+      <span class="maybe">{candidates.map((p) => identityName(variant, p)).join(" ")}</span>
     {/if}
+  {/if}
+
+  {#if view.marks.length > 0}
+    <span class="marks" aria-hidden="true">
+      {#each view.marks as mark (mark)}
+        <span class="mark">
+          {#if mark === "trash"}
+            <svg viewBox="0 0 24 24"
+              ><path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3" /></svg
+            >
+          {:else if mark === "fix"}
+            <svg viewBox="0 0 24 24"
+              ><path
+                d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"
+              /></svg
+            >
+          {:else}
+            {mark === "question" ? "?" : "!"}
+          {/if}
+        </span>
+      {/each}
+    </span>
   {/if}
 
   {#if slot !== undefined}
@@ -187,6 +253,22 @@
     box-shadow: 0 0 0 1px var(--warn);
   }
 
+  /* hanab.live's colours for the borders a note can draw. */
+  .finessed {
+    border-color: aqua;
+    box-shadow: 0 0 0 1px aqua;
+  }
+
+  .discard-permission {
+    border-color: #c03a3a;
+    box-shadow: 0 0 0 1px #c03a3a;
+  }
+
+  .chop-moved {
+    border-color: #fffce6;
+    box-shadow: 0 0 0 1px #fffce6;
+  }
+
   .selected {
     transform: translateY(-4px);
     box-shadow: 0 0 0 3px var(--accent);
@@ -194,6 +276,11 @@
 
   .highlight {
     box-shadow: 0 0 0 3px var(--good);
+  }
+
+  /* Known trash nobody has clued, after hanab.live's fade. */
+  .faded {
+    opacity: 0.6;
   }
 
   .dim {
@@ -245,6 +332,50 @@
     font-size: 0.55rem;
     font-weight: 700;
     opacity: 0.65;
+  }
+
+  .marks {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    align-content: center;
+    gap: 2px;
+    pointer-events: none;
+  }
+  .sm .marks {
+    font-size: 0.7rem;
+  }
+  .md .marks {
+    font-size: 0.9rem;
+  }
+  .lg .marks {
+    font-size: 1.2rem;
+  }
+
+  .mark {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.6em;
+    height: 1.6em;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    font-weight: 800;
+    line-height: 1;
+  }
+
+  .mark svg {
+    width: 1.05em;
+    height: 1.05em;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
 
   .note-dot {

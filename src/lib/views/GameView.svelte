@@ -295,6 +295,8 @@
         identity={card.identity}
         knowledge={card.knowledge}
         possibilities={maybe}
+        note={record.notes[order]}
+        finished={game.finished}
         size="lg"
       />
       <div class="stack grow">
@@ -323,6 +325,12 @@
         value={record.notes[order] ?? ""}
         oninput={(event) => save(setNote(record, order, event.currentTarget.value))}
       ></textarea>
+      <span class="small muted">
+        As on hanab.live: <code>r1</code>, <code>r,b</code> or <code>!5</code> shows what it
+        could be; <code>f</code>, <code>cm</code>, <code>kt</code>, <code>?</code> or
+        <code>blank</code> marks it. Prose only counts in <code>[brackets]</code> or after the last
+        <code>|</code>.
+      </span>
     </label>
 
     {#if isKnown(card.identity)}

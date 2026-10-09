@@ -139,6 +139,24 @@ describe("recording a game end to end", () => {
     expect(sheet.getByText(/all\s+playable now/)).toBeDefined();
   });
 
+  it("draws a card the way its note reads on hanab.live", async () => {
+    await startTwoPlayerGame();
+    await dealVisibleHand();
+
+    // A note naming one card shows our hidden card as it.
+    await user.click(screen.getAllByRole("button", { name: "unknown card" })[0]);
+    await user.type(screen.getByRole("textbox"), "r1");
+    await user.click(screen.getAllByRole("button", { name: "Close" })[0]);
+    expect(screen.getByRole("button", { name: "noted r1" })).toBeDefined();
+
+    // A finesse note borders a card we can see, without changing its face.
+    await user.click(screen.getByRole("button", { name: "r2" }));
+    await user.type(screen.getByRole("textbox"), "f");
+    await user.click(screen.getAllByRole("button", { name: "Close" })[0]);
+    const finessed = screen.getByRole("button", { name: "r2, finessed" });
+    expect(finessed.classList.contains("finessed")).toBe(true);
+  });
+
   it("asks which of our own cards a clue touched", async () => {
     await startTwoPlayerGame();
     await dealVisibleHand();

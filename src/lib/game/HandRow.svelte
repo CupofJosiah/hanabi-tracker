@@ -51,6 +51,7 @@
     knowledge: card.knowledge,
     possibilities: possibilities?.get(order),
     note: notes?.[order],
+    finished: game.finished,
     slot: card.slot,
     selected: selected?.has(order),
     highlight: highlight?.has(order),
