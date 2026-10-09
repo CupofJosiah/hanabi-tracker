@@ -11,6 +11,7 @@
  * needs game state, so it lives in `engine.ts`.
  */
 import { COLORS, RULE_SETS, SUITS, VARIANTS, type RuleSet, type SuitDef } from "./variantData";
+import { RESERVED_NOTES } from "./noteKeywords";
 import type { Clue, Identity } from "./types";
 
 export type { SuitDef, RuleSet };
@@ -142,13 +143,22 @@ function clueColorsOf(suits: readonly SuitDef[], rules: RuleSet): ClueColor[] {
   return names.map((name) => ({ name, fill: fillByColor.get(name) ?? "#888888" }));
 }
 
+/**
+ * Ports `getUppercaseSuitAbbreviationsForVariant`: a suit whose letter is taken
+ * falls back to the next free letter of its name, skipping "Dark " and any
+ * letter a note reserves (no `F` for finesse). Notes name suits by these
+ * letters, so they must come out exactly as hanab.live's do.
+ */
 function uniqueAbbreviations(suits: readonly SuitDef[]): string[] {
   const used = new Set<string>();
   return suits.map((suit) => {
-    const candidates = [suit.abbr, ...suit.name.replace(/[^A-Za-z]/g, "").toUpperCase()];
-    const pick = candidates.find((c) => !used.has(c)) ?? suit.abbr;
+    const own = suit.abbr.toLowerCase();
+    const fallbacks = [...suit.display.replace(/^Dark /, "").toLowerCase()].filter(
+      (letter) => letter !== " " && !RESERVED_NOTES.has(letter),
+    );
+    const pick = [own, ...fallbacks].find((letter) => !used.has(letter)) ?? own;
     used.add(pick);
-    return pick;
+    return pick.toUpperCase();
   });
 }
 
